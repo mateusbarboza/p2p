@@ -24,6 +24,8 @@ import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'chat_screen.dart';
+import 'identity_backup.dart';
+import 'onboarding_screen.dart';
 import 'profile_screen.dart';
 import 'providers/contacts_provider.dart';
 import 'providers/file_transfers_provider.dart';
@@ -31,30 +33,131 @@ import 'providers/messages_provider.dart';
 import 'providers/pending_requests_provider.dart';
 import 'providers/self_profile_provider.dart';
 import 'providers/self_status_provider.dart';
+import 'providers/theme_mode_provider.dart';
 import 'providers/tox_events_provider.dart';
 import 'providers/tox_manager_provider.dart';
 import 'tox_bindings.dart';
 import 'tox_events.dart';
+import 'welcome_choice_screen.dart';
 
 void main() {
   runApp(const ProviderScope(child: TalksnapApp()));
 }
 
-class TalksnapApp extends StatelessWidget {
+class TalksnapApp extends ConsumerWidget {
   const TalksnapApp({super.key});
 
+  static const _seedColor = Color(0xFF2F6FED); // azul nostálgico, estilo MSN
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final themeMode = ref.watch(themeModeProvider);
+
     return MaterialApp(
       title: 'Talksnap',
       debugShowCheckedModeBanner: false,
+      themeMode: themeMode.flutterThemeMode,
       theme: ThemeData(
         useMaterial3: true,
-        colorSchemeSeed: const Color(0xFF2F6FED), // azul nostálgico, estilo MSN
+        colorSchemeSeed: _seedColor,
         brightness: Brightness.light,
       ),
-      home: const HomeScreen(),
+      darkTheme: ThemeData(
+        useMaterial3: true,
+        colorSchemeSeed: _seedColor,
+        brightness: Brightness.dark,
+      ),
+      home: const AppRoot(),
     );
+  }
+}
+
+/// Decide qual tela mostrar assim que o app abre:
+///   - splash, enquanto ainda não sabemos se já existe um savedata no disco;
+///   - WelcomeChoiceScreen, se NENHUM savedata existe ainda — a única janela
+///     de oportunidade para importar um backup em vez de deixar o toxcore
+///     gerar uma identidade nova sozinho (ver welcome_choice_screen.dart);
+///   - splash de novo, enquanto o perfil já existente está sendo lido;
+///   - OnboardingScreen, se o nome ainda está vazio (identidade nova, sem
+///     backup importado);
+///   - HomeScreen, no dia a dia normal.
+///
+/// Também é aqui que os Notifiers "globais" (mensagens, arquivos, perfil)
+/// são ativados pela primeira vez — mas só depois de decidido que é seguro
+/// deixar o isolate de rede subir (ver [_startNetworking]).
+class AppRoot extends ConsumerStatefulWidget {
+  const AppRoot({super.key});
+
+  @override
+  ConsumerState<AppRoot> createState() => _AppRootState();
+}
+
+class _AppRootState extends ConsumerState<AppRoot> {
+  bool _checkingIdentity = true;
+  bool _networkingStarted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkExistingIdentity();
+  }
+
+  Future<void> _checkExistingIdentity() async {
+    final file = await resolveSavedataFile();
+    final exists = await file.exists();
+    if (!mounted) return;
+    setState(() => _checkingIdentity = false);
+    if (exists) {
+      _startNetworking();
+    }
+  }
+
+  /// Só é seguro chamar isto depois de garantir que, se a intenção era
+  /// importar um backup, os bytes já foram copiados para o caminho do
+  /// savedata — o isolate de rede lê esse arquivo assim que sobe.
+  void _startNetworking() {
+    if (_networkingStarted) return;
+    _networkingStarted = true;
+    // Dispara o boot do isolate de rede uma única vez (FutureProvider já
+    // cacheia — chamadas seguintes só reaproveitam o resultado).
+    ref.read(toxNetworkStartupProvider);
+    // IMPORTANTE: ativa a persistência de mensagens/arquivos/perfil aqui,
+    // antes de qualquer tela específica — esses Notifiers escutam a stream
+    // de eventos (broadcast, sem replay). Se nada os estiver observando no
+    // instante em que um evento chega, ele se perde para sempre, mesmo que
+    // o usuário abra a tela relevante logo em seguida.
+    ref.read(messagesSyncProvider);
+    ref.read(fileTransfersSyncProvider);
+    ref.read(selfProfileProvider);
+    // Mesmo problema vale para o Talksnap ID: ToxSelfStatusEvent chega logo
+    // no boot do isolate, bem antes de qualquer tela (onboarding ou home)
+    // ter chance de observar este provider pela primeira vez.
+    ref.read(selfStatusProvider);
+    // E, por consistência/segurança, os mesmos providers que hoje só a
+    // HomeScreen observa — um pedido de amizade ou confirmação de conexão
+    // podem chegar antes dela existir (ex: ainda na tela de onboarding).
+    ref.read(contactsProvider);
+    ref.read(pendingRequestsProvider);
+    setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_checkingIdentity) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (!_networkingStarted) {
+      return WelcomeChoiceScreen(onIdentityReady: _startNetworking);
+    }
+
+    final selfProfile = ref.watch(selfProfileProvider);
+    if (!selfProfile.loaded) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (selfProfile.name.isEmpty) {
+      return const OnboardingScreen();
+    }
+    return const HomeScreen();
   }
 }
 
@@ -77,25 +180,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   ContactViewModel? _selectedContact;
   bool _showTalksnapId = false;
   bool _showAddContactForm = false;
-
-  @override
-  void initState() {
-    super.initState();
-    // Dispara o boot do isolate de rede uma única vez (FutureProvider já
-    // cacheia — chamadas seguintes só reaproveitam o resultado).
-    ref.read(toxNetworkStartupProvider);
-    // IMPORTANTE: ativa a persistência de mensagens/arquivos aqui, na tela
-    // inicial, e não só quando uma tela de chat é aberta. Esses Notifiers
-    // escutam a stream de eventos (broadcast, sem replay) — se nada os
-    // estiver observando no instante em que uma mensagem/arquivo chega, o
-    // evento se perde para sempre, mesmo que o usuário abra a conversa
-    // logo em seguida.
-    ref.read(messagesSyncProvider);
-    ref.read(fileTransfersSyncProvider);
-    // Mesmo motivo: se nada observar o perfil próprio antes do evento de
-    // boot chegar, o nome/status salvos anteriormente nunca aparecem na UI.
-    ref.read(selfProfileProvider);
-  }
 
   void _submitAddFriend() {
     final talksnapId = _talksnapIdController.text.trim().toUpperCase();

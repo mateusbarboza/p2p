@@ -33,7 +33,7 @@ import 'package:flutter/services.dart'
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
-import 'dev_profile.dart';
+import 'identity_backup.dart' show resolveSavedataFile;
 import 'tox_bindings.dart';
 import 'tox_events.dart';
 
@@ -63,12 +63,6 @@ class _ActiveFileTransfer {
   String? savedPath;
   int transferredBytes = 0;
 }
-
-/// Nome do arquivo que guarda o savedata (identidade Tox) no diretório de
-/// dados do app — sujeito ao mesmo sufixo de perfil de desenvolvimento
-/// usado pelo banco de contatos (ver dev_profile.dart), para que duas
-/// cópias do app na mesma máquina não leiam/escrevam o mesmo arquivo.
-String _savedataFileName() => '${withDevProfileSuffix('talksnap')}.tox';
 
 /// A cada quantas iterações do loop de rede o savedata é persistido de novo
 /// (além de sempre salvar no primeiro boot, após mudanças na lista de
@@ -202,6 +196,30 @@ class ToxIsolateManager {
   /// Atualiza nome e mensagem de status do próprio perfil.
   void setProfile(String name, String statusMessage) {
     _sendCommand(SetProfileCommand(name: name, statusMessage: statusMessage));
+  }
+
+  /// Força gravar o savedata no disco agora, em vez de esperar o próximo
+  /// ciclo periódico. Chamado antes de exportar um backup de identidade —
+  /// espera o [ToxSavedataFlushedEvent] de confirmação antes de ler o
+  /// arquivo, pra garantir que o backup reflete o estado mais recente.
+  Future<void> flushSavedata() {
+    final completer = Completer<void>();
+    late final StreamSubscription<ToxNetworkEvent> subscription;
+    subscription = updates.listen((event) {
+      if (event is ToxSavedataFlushedEvent) {
+        subscription.cancel();
+        completer.complete();
+      }
+    });
+    _sendCommand(const FlushSavedataCommand());
+    return completer.future.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () {
+        subscription.cancel();
+        throw TimeoutException(
+            'O isolate de rede não respondeu ao pedido de backup.');
+      },
+    );
   }
 
   /// Encerra a rede Tox de forma limpa e derruba o isolate.
@@ -784,6 +802,11 @@ class ToxIsolateManager {
           mainSendPort.send(
               ToxSelfProfileEvent(name: name, statusMessage: statusMessage));
           unawaited(persistSavedata());
+
+        case FlushSavedataCommand():
+          unawaited(persistSavedata().then((_) {
+            mainSendPort.send(const ToxSavedataFlushedEvent());
+          }));
       }
     });
 
@@ -792,9 +815,7 @@ class ToxIsolateManager {
     // liberando a thread do isolate entre uma iteração e outra em vez de
     // ocupar 100% da CPU.
     Future<void> networkLoop() async {
-      final directory = await getApplicationSupportDirectory();
-      saveFile = File(
-          '${directory.path}${Platform.pathSeparator}${_savedataFileName()}');
+      saveFile = await resolveSavedataFile();
       final currentSaveFile = saveFile!;
 
       Uint8List? savedata;

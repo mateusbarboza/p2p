@@ -55,6 +55,12 @@ class ToxFriendProfileEvent extends ToxNetworkEvent {
   final String statusMessage;
 }
 
+/// Confirma que o savedata foi gravado no disco após um
+/// [FlushSavedataCommand] — a UI pode então ler o arquivo com segurança.
+class ToxSavedataFlushedEvent extends ToxNetworkEvent {
+  const ToxSavedataFlushedEvent();
+}
+
 /// Alguem enviou um pedido de amizade para o nosso Talksnap ID.
 class ToxFriendRequestEvent extends ToxNetworkEvent {
   const ToxFriendRequestEvent(
@@ -268,4 +274,12 @@ class SetProfileCommand extends ToxNetworkCommand {
 
   final String name;
   final String statusMessage;
+}
+
+/// Pede para o isolate gravar o savedata no disco imediatamente, em vez de
+/// esperar o próximo ciclo periódico. Usado antes de exportar um backup de
+/// identidade (ver identity_backup.dart) — sem isso, o arquivo no disco
+/// pode estar alguns segundos desatualizado em relação ao estado em memória.
+class FlushSavedataCommand extends ToxNetworkCommand {
+  const FlushSavedataCommand();
 }

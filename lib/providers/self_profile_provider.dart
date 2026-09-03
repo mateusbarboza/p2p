@@ -15,18 +15,35 @@ import 'tox_manager_provider.dart';
 const String _kAvatarPathPrefsKey = 'talksnap.avatarPath';
 
 class SelfProfile {
-  const SelfProfile({this.name = '', this.statusMessage = '', this.avatarPath});
+  const SelfProfile({
+    this.name = '',
+    this.statusMessage = '',
+    this.avatarPath,
+    this.loaded = false,
+  });
 
   final String name;
   final String statusMessage;
   final String? avatarPath;
 
-  SelfProfile copyWith(
-      {String? name, String? statusMessage, String? avatarPath}) {
+  /// `true` assim que o primeiro [ToxSelfProfileEvent] chega (nome/status
+  /// já lidos do savedata, mesmo que vazios). Distingue "ainda carregando"
+  /// de "carregou e o nome está mesmo vazio" — sem isso, a tela de boas-
+  /// vindas (ver onboarding_screen.dart) apareceria por um instante em
+  /// toda abertura do app, antes do nome salvo ser lido.
+  final bool loaded;
+
+  SelfProfile copyWith({
+    String? name,
+    String? statusMessage,
+    String? avatarPath,
+    bool? loaded,
+  }) {
     return SelfProfile(
       name: name ?? this.name,
       statusMessage: statusMessage ?? this.statusMessage,
       avatarPath: avatarPath ?? this.avatarPath,
+      loaded: loaded ?? this.loaded,
     );
   }
 }
@@ -38,7 +55,10 @@ class SelfProfileNotifier extends Notifier<SelfProfile> {
       next.whenData((event) {
         if (event is ToxSelfProfileEvent) {
           state = state.copyWith(
-              name: event.name, statusMessage: event.statusMessage);
+            name: event.name,
+            statusMessage: event.statusMessage,
+            loaded: true,
+          );
         }
       });
     });

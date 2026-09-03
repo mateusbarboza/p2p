@@ -11,7 +11,10 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'identity_backup.dart';
 import 'providers/self_profile_provider.dart';
+import 'providers/theme_mode_provider.dart';
+import 'providers/tox_manager_provider.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({super.key});
@@ -24,6 +27,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   late final TextEditingController _nameController;
   late final TextEditingController _statusController;
   bool _initialized = false;
+  bool _exportingBackup = false;
 
   @override
   void dispose() {
@@ -47,9 +51,42 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     );
   }
 
+  /// Se a pessoa formatar o PC (ou trocar de máquina) sem esse backup, a
+  /// identidade se perde para sempre — o Tox não guarda "conta" em servidor
+  /// nenhum, só essas chaves locais. Por isso força um flush antes de ler o
+  /// arquivo: sem isso, o backup poderia ficar alguns segundos desatualizado.
+  Future<void> _exportBackup() async {
+    setState(() => _exportingBackup = true);
+    try {
+      await ref.read(toxIsolateManagerProvider).flushSavedata();
+      final savedataFile = await resolveSavedataFile();
+      final bytes = await savedataFile.readAsBytes();
+      final savedUri = await FilePicker.saveFile(
+        fileName: 'talksnap_backup.tox',
+        bytes: bytes,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            savedUri != null ? 'Backup salvo!' : 'Backup cancelado.',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Falha ao gerar backup: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _exportingBackup = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final profile = ref.watch(selfProfileProvider);
+    final themeMode = ref.watch(themeModeProvider);
 
     // Só inicializa os controllers uma vez com o que já veio do toxcore —
     // depois disso, edição é livre (não sobrescrever o que o usuário está
@@ -110,6 +147,51 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               ),
               const SizedBox(height: 12),
               FilledButton(onPressed: _save, child: const Text('Salvar')),
+              const Divider(height: 40),
+              Text('Aparência', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 8),
+              SegmentedButton<AppThemeMode>(
+                segments: const [
+                  ButtonSegment(
+                    value: AppThemeMode.light,
+                    label: Text('Claro'),
+                    icon: Icon(Icons.light_mode_outlined),
+                  ),
+                  ButtonSegment(
+                    value: AppThemeMode.dark,
+                    label: Text('Escuro'),
+                    icon: Icon(Icons.dark_mode_outlined),
+                  ),
+                  ButtonSegment(
+                    value: AppThemeMode.system,
+                    label: Text('Sistema'),
+                    icon: Icon(Icons.settings_suggest_outlined),
+                  ),
+                ],
+                selected: {themeMode},
+                onSelectionChanged: (selection) => ref
+                    .read(themeModeProvider.notifier)
+                    .setMode(selection.first),
+              ),
+              const Divider(height: 40),
+              Text('Segurança', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 4),
+              Text(
+                'Se você formatar o PC sem esse backup, sua identidade e '
+                'contatos se perdem para sempre — não existe "recuperar '
+                'conta" num sistema P2P sem servidor.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: _exportingBackup ? null : _exportBackup,
+                icon: const Icon(Icons.backup_outlined),
+                label: Text(
+                  _exportingBackup
+                      ? 'Gerando backup...'
+                      : 'Fazer backup da identidade',
+                ),
+              ),
             ],
           ),
         ),

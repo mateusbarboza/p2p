@@ -107,6 +107,7 @@ class ContactsNotifier extends Notifier<List<ContactViewModel>> {
       case ToxMessageSentEvent():
       case ToxMessageReadReceiptEvent():
       case ToxFileTransferEvent():
+      case ToxSavedataFlushedEvent():
         break;
     }
   }

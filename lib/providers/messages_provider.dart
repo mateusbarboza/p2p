@@ -76,6 +76,7 @@ class MessagesSyncNotifier extends Notifier<void> {
       case ToxFileTransferEvent():
       case ToxSelfProfileEvent():
       case ToxFriendProfileEvent():
+      case ToxSavedataFlushedEvent():
         break;
     }
   }
