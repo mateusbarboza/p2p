@@ -73,3 +73,29 @@ Esses dados ajudam a decidir se o ajuste necessário é na lista de nós de
 bootstrap (`lib/tox_bindings.dart`), no intervalo de nova tentativa
 (`lib/tox_isolate_manager.dart`), ou se é uma limitação de rede fora do
 controle do app.
+
+## Limitação conhecida — Grupos não sobrevivem a reiniciar o app
+
+Criar grupo, convidar, aceitar convite, mensagens e lista de membros
+funcionam perfeitamente **enquanto o app permanece aberto**. Porém, ao
+fechar e reabrir o app (em qualquer um dos lados), o grupo desaparece do
+lado do toxcore — mesmo que a linha ainda apareça na lista da UI por um
+instante (ela vem do banco local via `Groups`/`GroupMembers`, que não sabe
+que o grupo sumiu do lado nativo).
+
+Isolado via teste direto: criar um grupo, aguardar até 18s (inclusive após
+um segundo peer entrar de verdade), e recarregar o `savedata` retornado por
+`tox_get_savedata()` numa instância `Tox*` de teste na mesma sessão (sem
+nem fechar o app) — `tox_group_get_group_list` volta vazio nesse
+round-trip. Ou seja, a versão do toxcore atualmente pinada em
+`native/third_party/toxcore` não está persistindo o estado de grupos NGC no
+savedata, independente de tempo de espera ou de outro peer já ter entrado.
+Isso não é um bug do código do Talksnap — é uma limitação/bug da biblioteca
+nativa nessa versão.
+
+Decisão registrada (2026-09-03): aceitar a limitação por enquanto. Grupos
+continuam existindo apenas durante a sessão atual do app; ao reabrir, é
+preciso criar/juntar-se ao grupo de novo. Se algum dia quiser revisitar,
+o próximo passo seria tentar atualizar o submódulo `toxcore` para uma
+versão mais nova e repetir esse mesmo teste de round-trip antes de investir
+mais tempo em qualquer outro lugar.

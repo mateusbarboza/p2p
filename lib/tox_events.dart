@@ -11,6 +11,8 @@
 // novo tipo de evento/comando adicionado em fase futura (mensagens, arquivos,
 // chamadas) nao passa despercebido em algum consumidor.
 
+import 'dart:typed_data' show Uint8List;
+
 import 'tox_bindings.dart' show ToxConnection;
 
 // ---------------------------------------------------------------------------
@@ -195,6 +197,170 @@ class ToxFileTransferEvent extends ToxNetworkEvent {
 }
 
 // ---------------------------------------------------------------------------
+// Grupos (NGC). A chave estável entre execuções é o Chat ID (32 bytes hex,
+// via chatIdHex) — group_number é efêmero por sessão, igual friend_number,
+// e nunca é usado fora do isolate de rede.
+// ---------------------------------------------------------------------------
+
+/// Um grupo foi criado por nós (`tox_group_new`). O toxcore não dispara
+/// `group_self_join` para quem cria — este evento cobre esse caso.
+class ToxGroupCreatedEvent extends ToxNetworkEvent {
+  const ToxGroupCreatedEvent({
+    required this.chatIdHex,
+    required this.name,
+    required this.isFounder,
+  });
+  final String chatIdHex;
+  final String name;
+
+  /// Se somos o fundador do grupo — usado pela UI para mostrar "Excluir
+  /// grupo" (fundador) em vez de "Sair do grupo" (demais membros). Não
+  /// muda o comportamento por baixo: um grupo P2P sem servidor não tem
+  /// "apagar para todos", só "sair" — ambos chamam LeaveGroupCommand.
+  final bool isFounder;
+}
+
+/// Entramos num grupo com sucesso — seja aceitando um convite, seja (no
+/// boot) reconectando a um grupo já salvo no savedata.
+class ToxGroupSelfJoinedEvent extends ToxNetworkEvent {
+  const ToxGroupSelfJoinedEvent({
+    required this.chatIdHex,
+    required this.name,
+    required this.isFounder,
+  });
+  final String chatIdHex;
+  final String name;
+  final bool isFounder;
+}
+
+/// Falha ao tentar entrar num grupo (convite ruim, senha errada, grupo
+/// cheio, etc.).
+class ToxGroupJoinFailedEvent extends ToxNetworkEvent {
+  const ToxGroupJoinFailedEvent({required this.reason});
+  final String reason;
+}
+
+/// Um amigo nos convidou para um grupo. `inviteData` deve ser guardado como
+/// veio e reenviado sem modificação em [AcceptGroupInviteCommand].
+class ToxGroupInviteEvent extends ToxNetworkEvent {
+  const ToxGroupInviteEvent({
+    required this.fromPublicKeyHex,
+    required this.groupName,
+    required this.inviteData,
+  });
+  final String fromPublicKeyHex;
+  final String groupName;
+  final Uint8List inviteData;
+}
+
+/// Mensagem de texto recebida num grupo.
+class ToxGroupMessageEvent extends ToxNetworkEvent {
+  const ToxGroupMessageEvent({
+    required this.chatIdHex,
+    required this.peerId,
+    required this.senderName,
+    required this.message,
+    required this.receivedAt,
+  });
+  final String chatIdHex;
+  final int peerId;
+  final String senderName;
+  final String message;
+  final DateTime receivedAt;
+}
+
+/// Resultado de um SendGroupMessageCommand — espelha [ToxMessageSentEvent].
+class ToxGroupMessageSentEvent extends ToxNetworkEvent {
+  const ToxGroupMessageSentEvent.success({
+    required this.chatIdHex,
+    required this.message,
+    required this.sentAt,
+  })  : success = true,
+        errorMessage = null;
+
+  const ToxGroupMessageSentEvent.failure({
+    required this.chatIdHex,
+    required this.message,
+    required this.errorMessage,
+  })  : success = false,
+        sentAt = null;
+
+  final bool success;
+  final String chatIdHex;
+  final String message;
+  final DateTime? sentAt;
+  final String? errorMessage;
+}
+
+/// Um peer (que não somos nós) entrou no grupo.
+class ToxGroupPeerJoinedEvent extends ToxNetworkEvent {
+  const ToxGroupPeerJoinedEvent({
+    required this.chatIdHex,
+    required this.peerId,
+    required this.peerName,
+    required this.connection,
+    required this.publicKeyHex,
+  });
+  final String chatIdHex;
+  final int peerId;
+  final String peerName;
+  final ToxConnection connection;
+
+  /// Chave pública estável do peer — usada para casar com um contato já
+  /// existente (ex: para não oferecer convidar de novo quem já é membro).
+  /// `null` se o toxcore não conseguiu fornecê-la.
+  final String? publicKeyHex;
+}
+
+/// Um peer saiu/foi desconectado do grupo.
+class ToxGroupPeerLeftEvent extends ToxNetworkEvent {
+  const ToxGroupPeerLeftEvent({
+    required this.chatIdHex,
+    required this.peerId,
+    required this.peerName,
+  });
+  final String chatIdHex;
+  final int peerId;
+  final String peerName;
+}
+
+/// Um convite de grupo foi enviado com sucesso a um contato (resultado de
+/// [InviteToGroupCommand]) — usado para não oferecer convidar de novo o
+/// mesmo contato. Não dá pra confirmar de fato a entrada dele comparando
+/// chaves: o toxcore identifica peers DENTRO de um grupo com uma chave
+/// própria daquele grupo (por design de privacidade do NGC), diferente da
+/// chave pública do amigo — então "convite enviado" é o sinal prático mais
+/// próximo disponível do lado de quem convida.
+class ToxGroupInviteSentEvent extends ToxNetworkEvent {
+  const ToxGroupInviteSentEvent({
+    required this.chatIdHex,
+    required this.contactPublicKeyHex,
+  });
+  final String chatIdHex;
+  final String contactPublicKeyHex;
+}
+
+/// Saímos de um grupo com sucesso (resultado de [LeaveGroupCommand]) —
+/// usado para remover a linha correspondente da lista local (ver
+/// GroupsRepository.delete).
+class ToxGroupLeftEvent extends ToxNetworkEvent {
+  const ToxGroupLeftEvent({required this.chatIdHex});
+  final String chatIdHex;
+}
+
+/// Um peer mudou o próprio apelido dentro do grupo.
+class ToxGroupPeerNameEvent extends ToxNetworkEvent {
+  const ToxGroupPeerNameEvent({
+    required this.chatIdHex,
+    required this.peerId,
+    required this.peerName,
+  });
+  final String chatIdHex;
+  final int peerId;
+  final String peerName;
+}
+
+// ---------------------------------------------------------------------------
 // Comandos: UI -> isolate de rede
 // ---------------------------------------------------------------------------
 
@@ -282,4 +448,43 @@ class SetProfileCommand extends ToxNetworkCommand {
 /// pode estar alguns segundos desatualizado em relação ao estado em memória.
 class FlushSavedataCommand extends ToxNetworkCommand {
   const FlushSavedataCommand();
+}
+
+/// Cria um novo grupo privado com o nome informado.
+class CreateGroupCommand extends ToxNetworkCommand {
+  const CreateGroupCommand({required this.groupName});
+  final String groupName;
+}
+
+/// Convida um contato existente (chave pública) para um grupo (Chat ID).
+class InviteToGroupCommand extends ToxNetworkCommand {
+  const InviteToGroupCommand(
+      {required this.chatIdHex, required this.contactPublicKeyHex});
+  final String chatIdHex;
+  final String contactPublicKeyHex;
+}
+
+/// Aceita um convite de grupo recebido (ver [ToxGroupInviteEvent]) — os
+/// dados devem ser exatamente os recebidos naquele evento.
+class AcceptGroupInviteCommand extends ToxNetworkCommand {
+  const AcceptGroupInviteCommand({
+    required this.fromPublicKeyHex,
+    required this.inviteData,
+  });
+  final String fromPublicKeyHex;
+  final Uint8List inviteData;
+}
+
+/// Envia uma mensagem de texto para um grupo (identificado pelo Chat ID).
+class SendGroupMessageCommand extends ToxNetworkCommand {
+  const SendGroupMessageCommand(
+      {required this.chatIdHex, required this.message});
+  final String chatIdHex;
+  final String message;
+}
+
+/// Sai de um grupo existente.
+class LeaveGroupCommand extends ToxNetworkCommand {
+  const LeaveGroupCommand({required this.chatIdHex});
+  final String chatIdHex;
 }

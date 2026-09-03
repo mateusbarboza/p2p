@@ -24,12 +24,16 @@ import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'chat_screen.dart';
+import 'group_chat_screen.dart';
 import 'identity_backup.dart';
 import 'onboarding_screen.dart';
 import 'profile_screen.dart';
 import 'providers/contacts_provider.dart';
 import 'providers/file_transfers_provider.dart';
+import 'providers/group_messages_provider.dart';
+import 'providers/groups_provider.dart';
 import 'providers/messages_provider.dart';
+import 'providers/pending_group_invites_provider.dart';
 import 'providers/pending_requests_provider.dart';
 import 'providers/self_profile_provider.dart';
 import 'providers/self_status_provider.dart';
@@ -138,6 +142,11 @@ class _AppRootState extends ConsumerState<AppRoot> {
     // podem chegar antes dela existir (ex: ainda na tela de onboarding).
     ref.read(contactsProvider);
     ref.read(pendingRequestsProvider);
+    // Mesmo risco de perda de evento vale para grupos: um convite ou
+    // mensagem de grupo pode chegar antes de qualquer tela de grupo existir.
+    ref.read(groupsProvider);
+    ref.read(groupMessagesSyncProvider);
+    ref.read(pendingGroupInvitesProvider);
     setState(() {});
   }
 
@@ -172,12 +181,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   final TextEditingController _talksnapIdController = TextEditingController();
   final TextEditingController _greetingController =
       TextEditingController(text: 'Vamos conversar no Talksnap!');
+  final TextEditingController _contactSearchController =
+      TextEditingController();
   bool _sendingFriendRequest = false;
+  String _contactSearchQuery = '';
 
   /// Contato selecionado na coluna da esquerda — a conversa dele aparece
   /// no painel da direita (layout mestre-detalhe, como Skype/Discord),
   /// em vez de navegar para uma tela cheia separada.
   ContactViewModel? _selectedContact;
+
+  /// Grupo selecionado — mutuamente exclusivo com [_selectedContact]: só um
+  /// dos dois é mostrado no painel da direita por vez.
+  GroupViewModel? _selectedGroup;
   bool _showTalksnapId = false;
   bool _showAddContactForm = false;
 
@@ -207,10 +223,94 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         .acceptFriendRequest(request.publicKeyHex);
   }
 
+  void _acceptGroupInvite(PendingGroupInvite invite) {
+    ref.read(pendingGroupInvitesProvider.notifier).remove(invite);
+    ref
+        .read(toxIsolateManagerProvider)
+        .acceptGroupInvite(invite.fromPublicKeyHex, invite.inviteData);
+  }
+
+  void _rejectGroupInvite(PendingGroupInvite invite) {
+    ref.read(pendingGroupInvitesProvider.notifier).remove(invite);
+  }
+
+  Future<void> _createGroup() async {
+    final controller = TextEditingController();
+    final groupName = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Criar grupo'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Nome do grupo',
+            border: OutlineInputBorder(),
+          ),
+          onSubmitted: (value) => Navigator.pop(context, value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Criar'),
+          ),
+        ],
+      ),
+    );
+    if (groupName == null || groupName.isEmpty) return;
+    ref.read(toxIsolateManagerProvider).createGroup(groupName);
+  }
+
+  Future<void> _confirmLeaveGroup(GroupViewModel group) async {
+    // Num grupo P2P sem servidor não existe "apagar para todos" — mesmo o
+    // fundador só consegue sair do grupo localmente; os demais membros
+    // continuam com o grupo deles normalmente. A ação por baixo
+    // (LeaveGroupCommand) é a mesma, só o rótulo muda.
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(group.isFounder ? 'Excluir grupo?' : 'Sair do grupo?'),
+        content: Text(
+          group.isFounder
+              ? 'Você excluirá "${group.name}" da sua lista e perderá o histórico local dele. Os outros membros continuam com o grupo deles normalmente.'
+              : 'Você sairá de "${group.name}" e perderá o histórico local dele.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(group.isFounder ? 'Excluir' : 'Sair'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      if (_selectedGroup?.chatIdHex == group.chatIdHex) {
+        setState(() => _selectedGroup = null);
+      }
+      ref.read(toxIsolateManagerProvider).leaveGroup(group.chatIdHex);
+    }
+  }
+
+  void _openGroupChat(GroupViewModel group) {
+    setState(() {
+      _selectedGroup = group;
+      _selectedContact = null;
+    });
+  }
+
   @override
   void dispose() {
     _talksnapIdController.dispose();
     _greetingController.dispose();
+    _contactSearchController.dispose();
     super.dispose();
   }
 
@@ -239,7 +339,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final selfProfile = ref.watch(selfProfileProvider);
     final pendingRequests = ref.watch(pendingRequestsProvider);
     final contacts = ref.watch(contactsProvider);
+    final groups = ref.watch(groupsProvider);
+    final pendingGroupInvites = ref.watch(pendingGroupInvitesProvider);
     final bool isOnline = selfStatus.connection != ToxConnection.none;
+
+    final query = _contactSearchQuery.trim().toLowerCase();
+    final filteredContacts = query.isEmpty
+        ? contacts
+        : contacts
+            .where((contact) =>
+                contact.displayName.toLowerCase().contains(query) ||
+                contact.publicKeyHex.toLowerCase().contains(query))
+            .toList();
 
     return Scaffold(
       appBar: AppBar(
@@ -402,10 +513,35 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 Text('Contatos (${contacts.length})',
                     style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 8),
+                if (contacts.isNotEmpty) ...[
+                  TextField(
+                    controller: _contactSearchController,
+                    decoration: InputDecoration(
+                      hintText: 'Buscar contato',
+                      prefixIcon: const Icon(Icons.search, size: 20),
+                      isDense: true,
+                      border: const OutlineInputBorder(),
+                      suffixIcon: _contactSearchQuery.isEmpty
+                          ? null
+                          : IconButton(
+                              icon: const Icon(Icons.clear, size: 18),
+                              onPressed: () {
+                                _contactSearchController.clear();
+                                setState(() => _contactSearchQuery = '');
+                              },
+                            ),
+                    ),
+                    onChanged: (value) =>
+                        setState(() => _contactSearchQuery = value),
+                  ),
+                  const SizedBox(height: 8),
+                ],
                 if (contacts.isEmpty)
                   const Text('Nenhum contato ainda.')
+                else if (filteredContacts.isEmpty)
+                  const Text('Nenhum contato encontrado.')
                 else
-                  for (final contact in contacts)
+                  for (final contact in filteredContacts)
                     _ContactTile(
                       contact: contact,
                       connectionLabel: _connectionLabel(contact.connection),
@@ -414,19 +550,77 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       onTap: () => _openChat(contact),
                       onRemove: () => _confirmRemoveContact(contact),
                     ),
+                if (pendingGroupInvites.isNotEmpty) ...[
+                  const Divider(height: 40),
+                  Text('Convites de grupo',
+                      style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 8),
+                  for (final invite in pendingGroupInvites)
+                    Card(
+                      child: ListTile(
+                        title: Text(invite.groupName),
+                        subtitle: const Text('Convite de um contato'),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            TextButton(
+                              onPressed: () => _rejectGroupInvite(invite),
+                              child: const Text('Recusar'),
+                            ),
+                            FilledButton(
+                              onPressed: () => _acceptGroupInvite(invite),
+                              child: const Text('Aceitar'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+                const Divider(height: 40),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text('Grupos (${groups.length})',
+                          style: Theme.of(context).textTheme.titleMedium),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.group_add_outlined, size: 20),
+                      tooltip: 'Criar grupo',
+                      onPressed: _createGroup,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                if (groups.isEmpty)
+                  const Text('Nenhum grupo ainda.')
+                else
+                  for (final group in groups)
+                    _GroupTile(
+                      group: group,
+                      selected: _selectedGroup?.chatIdHex == group.chatIdHex,
+                      onTap: () => _openGroupChat(group),
+                      onLeave: () => _confirmLeaveGroup(group),
+                    ),
               ],
             ),
           ),
           const VerticalDivider(width: 1),
           Expanded(
-            child: _selectedContact == null
-                ? const Center(
-                    child: Text('Selecione um contato para conversar'))
-                : ChatScreen(
-                    key: ValueKey(_selectedContact!.publicKeyHex),
-                    contactPublicKeyHex: _selectedContact!.publicKeyHex,
-                    contactLabel: _selectedContact!.displayName,
-                  ),
+            child: _selectedGroup != null
+                ? GroupChatScreen(
+                    key: ValueKey(_selectedGroup!.chatIdHex),
+                    chatIdHex: _selectedGroup!.chatIdHex,
+                    groupName: _selectedGroup!.name,
+                    contacts: contacts,
+                  )
+                : _selectedContact == null
+                    ? const Center(
+                        child: Text('Selecione um contato para conversar'))
+                    : ChatScreen(
+                        key: ValueKey(_selectedContact!.publicKeyHex),
+                        contactPublicKeyHex: _selectedContact!.publicKeyHex,
+                        contactLabel: _selectedContact!.displayName,
+                      ),
           ),
         ],
       ),
@@ -466,7 +660,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   void _openChat(ContactViewModel contact) {
-    setState(() => _selectedContact = contact);
+    setState(() {
+      _selectedContact = contact;
+      _selectedGroup = null;
+    });
   }
 
   String _connectionLabel(ToxConnection connection) {
@@ -550,6 +747,76 @@ class _ContactTileState extends State<_ContactTile> {
                       PopupMenuItem<void>(
                         onTap: widget.onRemove,
                         child: const Text('Remover contato'),
+                      ),
+                    ],
+                  )
+                : null,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Linha de grupo — mesmo padrão hover+`PopupMenuButton` de `_ContactTile`.
+class _GroupTile extends ConsumerStatefulWidget {
+  const _GroupTile({
+    required this.group,
+    required this.selected,
+    required this.onTap,
+    required this.onLeave,
+  });
+
+  final GroupViewModel group;
+  final bool selected;
+  final VoidCallback onTap;
+  final VoidCallback onLeave;
+
+  @override
+  ConsumerState<_GroupTile> createState() => _GroupTileState();
+}
+
+class _GroupTileState extends ConsumerState<_GroupTile> {
+  bool _hovering = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final group = widget.group;
+    // Roster persistido (sobrevive a reinício) em vez de group.members.length
+    // (só reflete quem já reconectou nesta sessão) — sem isso, a contagem
+    // voltaria a "1" toda vez que o app reabre.
+    final rosterCount =
+        ref.watch(groupRosterProvider(group.chatIdHex)).value?.length ??
+            group.members.length;
+    final memberCount =
+        rosterCount > group.members.length ? rosterCount : group.members.length;
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovering = true),
+      onExit: (_) => setState(() => _hovering = false),
+      child: Card(
+        color: widget.selected
+            ? Theme.of(context).colorScheme.primaryContainer
+            : null,
+        child: ListTile(
+          onTap: widget.onTap,
+          leading: const Icon(Icons.groups_outlined),
+          title: Text(group.name),
+          subtitle: Text('${memberCount + 1} membro(s)'),
+          trailing: SizedBox(
+            width: 28,
+            height: 28,
+            child: _hovering
+                ? PopupMenuButton<void>(
+                    padding: EdgeInsets.zero,
+                    icon: const Icon(Icons.arrow_drop_down_circle_outlined,
+                        size: 18),
+                    tooltip: 'Mais opções',
+                    itemBuilder: (context) => [
+                      PopupMenuItem<void>(
+                        onTap: widget.onLeave,
+                        child: Text(group.isFounder
+                            ? 'Excluir grupo'
+                            : 'Sair do grupo'),
                       ),
                     ],
                   )

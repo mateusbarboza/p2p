@@ -716,6 +716,385 @@ typedef _ToxCallbackFriendStatusMessageDart = void Function(
       callback,
 );
 
+// ---------------------------------------------------------------------------
+// Grupos (API "NGC" — tox_group_*). Mesmo padrão dos amigos: group_number é
+// efêmero por sessão; a chave estável entre execuções é o Chat ID (32 bytes,
+// via tox_group_get_chat_id — o equivalente de uma "chave pública" de grupo).
+// O estado dos grupos já é salvo dentro do savedata geral do toxcore, então
+// não precisa de nenhuma persistência nativa extra.
+// ---------------------------------------------------------------------------
+
+/// Valores do enum `TOX_GROUP_PRIVACY_STATE`. O Talksnap só cria grupos
+/// privados — quem entra precisa ser convidado por um amigo já existente,
+/// nunca por Chat ID público.
+const int kToxGroupPrivacyStatePrivate = 1;
+
+/// Tamanho em bytes do Chat ID de um grupo (`TOX_GROUP_CHAT_ID_SIZE`).
+const int kToxGroupChatIdSize = 32;
+
+/// Valor do enum `TOX_GROUP_ROLE` que designa quem criou o grupo — usado
+/// para decidir se a UI mostra "Excluir grupo" (fundador) ou "Sair do
+/// grupo" (demais membros). Não existe "apagar para todos" num grupo P2P
+/// sem servidor — ambas as ações chamam `tox_group_leave` por baixo, só a
+/// rotulagem muda.
+const int kToxGroupRoleFounder = 0;
+
+// bool tox_group_is_connected(const Tox *tox, Tox_Group_Number group_number, Tox_Err_Group_Is_Connected *error);
+typedef _ToxGroupIsConnectedNative = ffi.Uint8 Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Uint32 groupNumber,
+  ffi.Pointer<ffi.Int32> error,
+);
+typedef _ToxGroupIsConnectedDart = int Function(
+  ffi.Pointer<ffi.Void> tox,
+  int groupNumber,
+  ffi.Pointer<ffi.Int32> error,
+);
+
+// Tox_Group_Number tox_group_new(Tox *tox, Tox_Group_Privacy_State privacy_state, const uint8_t group_name[], size_t group_name_length, const uint8_t name[], size_t name_length, Tox_Err_Group_New *error);
+typedef _ToxGroupNewNative = ffi.Uint32 Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Int32 privacyState,
+  ffi.Pointer<ffi.Uint8> groupName,
+  ffi.Uint64 groupNameLength,
+  ffi.Pointer<ffi.Uint8> name,
+  ffi.Uint64 nameLength,
+  ffi.Pointer<ffi.Int32> error,
+);
+typedef _ToxGroupNewDart = int Function(
+  ffi.Pointer<ffi.Void> tox,
+  int privacyState,
+  ffi.Pointer<ffi.Uint8> groupName,
+  int groupNameLength,
+  ffi.Pointer<ffi.Uint8> name,
+  int nameLength,
+  ffi.Pointer<ffi.Int32> error,
+);
+
+// Tox_Group_Message_Id tox_group_send_message(const Tox *tox, Tox_Group_Number group_number, Tox_Message_Type message_type, const uint8_t message[], size_t length, Tox_Err_Group_Send_Message *error);
+typedef _ToxGroupSendMessageNative = ffi.Uint32 Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Uint32 groupNumber,
+  ffi.Int32 messageType,
+  ffi.Pointer<ffi.Uint8> message,
+  ffi.Uint64 length,
+  ffi.Pointer<ffi.Int32> error,
+);
+typedef _ToxGroupSendMessageDart = int Function(
+  ffi.Pointer<ffi.Void> tox,
+  int groupNumber,
+  int messageType,
+  ffi.Pointer<ffi.Uint8> message,
+  int length,
+  ffi.Pointer<ffi.Int32> error,
+);
+
+// bool tox_group_invite_friend(const Tox *tox, Tox_Group_Number group_number, Tox_Friend_Number friend_number, Tox_Err_Group_Invite_Friend *error);
+typedef _ToxGroupInviteFriendNative = ffi.Uint8 Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Uint32 groupNumber,
+  ffi.Uint32 friendNumber,
+  ffi.Pointer<ffi.Int32> error,
+);
+typedef _ToxGroupInviteFriendDart = int Function(
+  ffi.Pointer<ffi.Void> tox,
+  int groupNumber,
+  int friendNumber,
+  ffi.Pointer<ffi.Int32> error,
+);
+
+// Tox_Group_Number tox_group_invite_accept(Tox *tox, Tox_Friend_Number friend_number, const uint8_t invite_data[], size_t length, const uint8_t name[], size_t name_length, const uint8_t password[], size_t password_length, Tox_Err_Group_Invite_Accept *error);
+typedef _ToxGroupInviteAcceptNative = ffi.Uint32 Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Uint32 friendNumber,
+  ffi.Pointer<ffi.Uint8> inviteData,
+  ffi.Uint64 inviteDataLength,
+  ffi.Pointer<ffi.Uint8> name,
+  ffi.Uint64 nameLength,
+  ffi.Pointer<ffi.Uint8> password,
+  ffi.Uint64 passwordLength,
+  ffi.Pointer<ffi.Int32> error,
+);
+typedef _ToxGroupInviteAcceptDart = int Function(
+  ffi.Pointer<ffi.Void> tox,
+  int friendNumber,
+  ffi.Pointer<ffi.Uint8> inviteData,
+  int inviteDataLength,
+  ffi.Pointer<ffi.Uint8> name,
+  int nameLength,
+  ffi.Pointer<ffi.Uint8> password,
+  int passwordLength,
+  ffi.Pointer<ffi.Int32> error,
+);
+
+// bool tox_group_leave(Tox *tox, Tox_Group_Number group_number, const uint8_t part_message[], size_t length, Tox_Err_Group_Leave *error);
+typedef _ToxGroupLeaveNative = ffi.Uint8 Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Uint32 groupNumber,
+  ffi.Pointer<ffi.Uint8> partMessage,
+  ffi.Uint64 length,
+  ffi.Pointer<ffi.Int32> error,
+);
+typedef _ToxGroupLeaveDart = int Function(
+  ffi.Pointer<ffi.Void> tox,
+  int groupNumber,
+  ffi.Pointer<ffi.Uint8> partMessage,
+  int length,
+  ffi.Pointer<ffi.Int32> error,
+);
+
+// size_t tox_group_get_name_size(const Tox *tox, Tox_Group_Number group_number, Tox_Err_Group_State_Query *error);
+typedef _ToxGroupGetNameSizeNative = ffi.Uint64 Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Uint32 groupNumber,
+  ffi.Pointer<ffi.Int32> error,
+);
+typedef _ToxGroupGetNameSizeDart = int Function(
+  ffi.Pointer<ffi.Void> tox,
+  int groupNumber,
+  ffi.Pointer<ffi.Int32> error,
+);
+
+// bool tox_group_get_name(const Tox *tox, Tox_Group_Number group_number, uint8_t name[], Tox_Err_Group_State_Query *error);
+typedef _ToxGroupGetNameNative = ffi.Uint8 Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Uint32 groupNumber,
+  ffi.Pointer<ffi.Uint8> name,
+  ffi.Pointer<ffi.Int32> error,
+);
+typedef _ToxGroupGetNameDart = int Function(
+  ffi.Pointer<ffi.Void> tox,
+  int groupNumber,
+  ffi.Pointer<ffi.Uint8> name,
+  ffi.Pointer<ffi.Int32> error,
+);
+
+// bool tox_group_get_chat_id(const Tox *tox, Tox_Group_Number group_number, Tox_Group_Chat_Id chat_id, Tox_Err_Group_State_Query *error);
+typedef _ToxGroupGetChatIdNative = ffi.Uint8 Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Uint32 groupNumber,
+  ffi.Pointer<ffi.Uint8> chatId,
+  ffi.Pointer<ffi.Int32> error,
+);
+typedef _ToxGroupGetChatIdDart = int Function(
+  ffi.Pointer<ffi.Void> tox,
+  int groupNumber,
+  ffi.Pointer<ffi.Uint8> chatId,
+  ffi.Pointer<ffi.Int32> error,
+);
+
+// Tox_Group_Role tox_group_self_get_role(const Tox *tox, Tox_Group_Number group_number, Tox_Err_Group_Self_Query *error);
+typedef _ToxGroupSelfGetRoleNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Uint32 groupNumber,
+  ffi.Pointer<ffi.Int32> error,
+);
+typedef _ToxGroupSelfGetRoleDart = int Function(
+  ffi.Pointer<ffi.Void> tox,
+  int groupNumber,
+  ffi.Pointer<ffi.Int32> error,
+);
+
+// size_t tox_group_peer_get_name_size(const Tox *tox, Tox_Group_Number group_number, Tox_Group_Peer_Number peer_id, Tox_Err_Group_Peer_Query *error);
+typedef _ToxGroupPeerGetNameSizeNative = ffi.Uint64 Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Uint32 groupNumber,
+  ffi.Uint32 peerId,
+  ffi.Pointer<ffi.Int32> error,
+);
+typedef _ToxGroupPeerGetNameSizeDart = int Function(
+  ffi.Pointer<ffi.Void> tox,
+  int groupNumber,
+  int peerId,
+  ffi.Pointer<ffi.Int32> error,
+);
+
+// bool tox_group_peer_get_name(const Tox *tox, Tox_Group_Number group_number, Tox_Group_Peer_Number peer_id, uint8_t name[], Tox_Err_Group_Peer_Query *error);
+typedef _ToxGroupPeerGetNameNative = ffi.Uint8 Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Uint32 groupNumber,
+  ffi.Uint32 peerId,
+  ffi.Pointer<ffi.Uint8> name,
+  ffi.Pointer<ffi.Int32> error,
+);
+typedef _ToxGroupPeerGetNameDart = int Function(
+  ffi.Pointer<ffi.Void> tox,
+  int groupNumber,
+  int peerId,
+  ffi.Pointer<ffi.Uint8> name,
+  ffi.Pointer<ffi.Int32> error,
+);
+
+// bool tox_group_peer_get_public_key(const Tox *tox, Tox_Group_Number group_number, Tox_Group_Peer_Number peer_id, Tox_Public_Key public_key, Tox_Err_Group_Peer_Query *error);
+typedef _ToxGroupPeerGetPublicKeyNative = ffi.Uint8 Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Uint32 groupNumber,
+  ffi.Uint32 peerId,
+  ffi.Pointer<ffi.Uint8> publicKey,
+  ffi.Pointer<ffi.Int32> error,
+);
+typedef _ToxGroupPeerGetPublicKeyDart = int Function(
+  ffi.Pointer<ffi.Void> tox,
+  int groupNumber,
+  int peerId,
+  ffi.Pointer<ffi.Uint8> publicKey,
+  ffi.Pointer<ffi.Int32> error,
+);
+
+// Tox_Connection tox_group_peer_get_connection_status(const Tox *tox, Tox_Group_Number group_number, Tox_Group_Peer_Number peer_id, Tox_Err_Group_Peer_Query *error);
+typedef _ToxGroupPeerGetConnectionStatusNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Uint32 groupNumber,
+  ffi.Uint32 peerId,
+  ffi.Pointer<ffi.Int32> error,
+);
+typedef _ToxGroupPeerGetConnectionStatusDart = int Function(
+  ffi.Pointer<ffi.Void> tox,
+  int groupNumber,
+  int peerId,
+  ffi.Pointer<ffi.Int32> error,
+);
+
+// uint32_t tox_group_get_group_list_size(const Tox *tox);
+typedef _ToxGroupGetGroupListSizeNative = ffi.Uint32 Function(
+    ffi.Pointer<ffi.Void> tox);
+typedef _ToxGroupGetGroupListSizeDart = int Function(ffi.Pointer<ffi.Void> tox);
+
+// void tox_group_get_group_list(const Tox *tox, Tox_Group_Number group_list[]);
+typedef _ToxGroupGetGroupListNative = ffi.Void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Pointer<ffi.Uint32> groupList,
+);
+typedef _ToxGroupGetGroupListDart = void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Pointer<ffi.Uint32> groupList,
+);
+
+// typedef void tox_group_invite_cb(Tox *tox, Tox_Friend_Number friend_number, const uint8_t invite_data[], size_t invite_data_length, const uint8_t group_name[], size_t group_name_length, void *user_data);
+typedef ToxGroupInviteCallbackNative = ffi.Void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Uint32 friendNumber,
+  ffi.Pointer<ffi.Uint8> inviteData,
+  ffi.Uint64 inviteDataLength,
+  ffi.Pointer<ffi.Uint8> groupName,
+  ffi.Uint64 groupNameLength,
+  ffi.Pointer<ffi.Void> userData,
+);
+typedef _ToxCallbackGroupInviteNative = ffi.Void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Pointer<ffi.NativeFunction<ToxGroupInviteCallbackNative>> callback,
+);
+typedef _ToxCallbackGroupInviteDart = void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Pointer<ffi.NativeFunction<ToxGroupInviteCallbackNative>> callback,
+);
+
+// typedef void tox_group_message_cb(Tox *tox, Tox_Group_Number group_number, Tox_Group_Peer_Number peer_id, Tox_Message_Type message_type, const uint8_t message[], size_t message_length, Tox_Group_Message_Id message_id, void *user_data);
+typedef ToxGroupMessageCallbackNative = ffi.Void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Uint32 groupNumber,
+  ffi.Uint32 peerId,
+  ffi.Int32 messageType,
+  ffi.Pointer<ffi.Uint8> message,
+  ffi.Uint64 messageLength,
+  ffi.Uint32 messageId,
+  ffi.Pointer<ffi.Void> userData,
+);
+typedef _ToxCallbackGroupMessageNative = ffi.Void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Pointer<ffi.NativeFunction<ToxGroupMessageCallbackNative>> callback,
+);
+typedef _ToxCallbackGroupMessageDart = void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Pointer<ffi.NativeFunction<ToxGroupMessageCallbackNative>> callback,
+);
+
+// typedef void tox_group_peer_join_cb(Tox *tox, Tox_Group_Number group_number, Tox_Group_Peer_Number peer_id, void *user_data);
+typedef ToxGroupPeerJoinCallbackNative = ffi.Void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Uint32 groupNumber,
+  ffi.Uint32 peerId,
+  ffi.Pointer<ffi.Void> userData,
+);
+typedef _ToxCallbackGroupPeerJoinNative = ffi.Void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Pointer<ffi.NativeFunction<ToxGroupPeerJoinCallbackNative>> callback,
+);
+typedef _ToxCallbackGroupPeerJoinDart = void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Pointer<ffi.NativeFunction<ToxGroupPeerJoinCallbackNative>> callback,
+);
+
+// typedef void tox_group_peer_exit_cb(Tox *tox, Tox_Group_Number group_number, Tox_Group_Peer_Number peer_id, Tox_Group_Exit_Type exit_type, const uint8_t name[], size_t name_length, const uint8_t part_message[], size_t part_message_length, void *user_data);
+typedef ToxGroupPeerExitCallbackNative = ffi.Void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Uint32 groupNumber,
+  ffi.Uint32 peerId,
+  ffi.Int32 exitType,
+  ffi.Pointer<ffi.Uint8> name,
+  ffi.Uint64 nameLength,
+  ffi.Pointer<ffi.Uint8> partMessage,
+  ffi.Uint64 partMessageLength,
+  ffi.Pointer<ffi.Void> userData,
+);
+typedef _ToxCallbackGroupPeerExitNative = ffi.Void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Pointer<ffi.NativeFunction<ToxGroupPeerExitCallbackNative>> callback,
+);
+typedef _ToxCallbackGroupPeerExitDart = void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Pointer<ffi.NativeFunction<ToxGroupPeerExitCallbackNative>> callback,
+);
+
+// typedef void tox_group_self_join_cb(Tox *tox, Tox_Group_Number group_number, void *user_data);
+typedef ToxGroupSelfJoinCallbackNative = ffi.Void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Uint32 groupNumber,
+  ffi.Pointer<ffi.Void> userData,
+);
+typedef _ToxCallbackGroupSelfJoinNative = ffi.Void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Pointer<ffi.NativeFunction<ToxGroupSelfJoinCallbackNative>> callback,
+);
+typedef _ToxCallbackGroupSelfJoinDart = void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Pointer<ffi.NativeFunction<ToxGroupSelfJoinCallbackNative>> callback,
+);
+
+// typedef void tox_group_join_fail_cb(Tox *tox, Tox_Group_Number group_number, Tox_Group_Join_Fail fail_type, void *user_data);
+typedef ToxGroupJoinFailCallbackNative = ffi.Void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Uint32 groupNumber,
+  ffi.Int32 failType,
+  ffi.Pointer<ffi.Void> userData,
+);
+typedef _ToxCallbackGroupJoinFailNative = ffi.Void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Pointer<ffi.NativeFunction<ToxGroupJoinFailCallbackNative>> callback,
+);
+typedef _ToxCallbackGroupJoinFailDart = void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Pointer<ffi.NativeFunction<ToxGroupJoinFailCallbackNative>> callback,
+);
+
+// typedef void tox_group_peer_name_cb(Tox *tox, Tox_Group_Number group_number, Tox_Group_Peer_Number peer_id, const uint8_t name[], size_t name_length, void *user_data);
+typedef ToxGroupPeerNameCallbackNative = ffi.Void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Uint32 groupNumber,
+  ffi.Uint32 peerId,
+  ffi.Pointer<ffi.Uint8> name,
+  ffi.Uint64 nameLength,
+  ffi.Pointer<ffi.Void> userData,
+);
+typedef _ToxCallbackGroupPeerNameNative = ffi.Void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Pointer<ffi.NativeFunction<ToxGroupPeerNameCallbackNative>> callback,
+);
+typedef _ToxCallbackGroupPeerNameDart = void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Pointer<ffi.NativeFunction<ToxGroupPeerNameCallbackNative>> callback,
+);
+
 /// Wrapper único e cacheado sobre a `DynamicLibrary` do toxcore.
 ///
 /// Uso: `ToxCoreBindings.instance.toxNew(...)`.
@@ -779,6 +1158,30 @@ class ToxCoreBindings {
   late final _ToxCallbackFriendNameDart _toxCallbackFriendName;
   late final _ToxCallbackFriendStatusMessageDart
       _toxCallbackFriendStatusMessage;
+  late final _ToxGroupIsConnectedDart _toxGroupIsConnected;
+  late final _ToxGroupNewDart _toxGroupNew;
+  late final _ToxGroupSendMessageDart _toxGroupSendMessage;
+  late final _ToxGroupInviteFriendDart _toxGroupInviteFriend;
+  late final _ToxGroupInviteAcceptDart _toxGroupInviteAccept;
+  late final _ToxGroupLeaveDart _toxGroupLeave;
+  late final _ToxGroupSelfGetRoleDart _toxGroupSelfGetRole;
+  late final _ToxGroupGetNameSizeDart _toxGroupGetNameSize;
+  late final _ToxGroupGetNameDart _toxGroupGetName;
+  late final _ToxGroupGetChatIdDart _toxGroupGetChatId;
+  late final _ToxGroupPeerGetNameSizeDart _toxGroupPeerGetNameSize;
+  late final _ToxGroupPeerGetNameDart _toxGroupPeerGetName;
+  late final _ToxGroupPeerGetPublicKeyDart _toxGroupPeerGetPublicKey;
+  late final _ToxGroupPeerGetConnectionStatusDart
+      _toxGroupPeerGetConnectionStatus;
+  late final _ToxGroupGetGroupListSizeDart _toxGroupGetGroupListSize;
+  late final _ToxGroupGetGroupListDart _toxGroupGetGroupList;
+  late final _ToxCallbackGroupInviteDart _toxCallbackGroupInvite;
+  late final _ToxCallbackGroupMessageDart _toxCallbackGroupMessage;
+  late final _ToxCallbackGroupPeerJoinDart _toxCallbackGroupPeerJoin;
+  late final _ToxCallbackGroupPeerExitDart _toxCallbackGroupPeerExit;
+  late final _ToxCallbackGroupSelfJoinDart _toxCallbackGroupSelfJoin;
+  late final _ToxCallbackGroupJoinFailDart _toxCallbackGroupJoinFail;
+  late final _ToxCallbackGroupPeerNameDart _toxCallbackGroupPeerName;
 
   /// Identifica o sistema operacional em tempo de execução e carrega o
   /// binário nativo correto do toxcore para cada plataforma.
@@ -935,6 +1338,67 @@ class ToxCoreBindings {
             _ToxCallbackFriendStatusMessageNative,
             _ToxCallbackFriendStatusMessageDart>(
         'tox_callback_friend_status_message');
+    _toxGroupIsConnected = _lib.lookupFunction<_ToxGroupIsConnectedNative,
+        _ToxGroupIsConnectedDart>('tox_group_is_connected');
+    _toxGroupNew = _lib
+        .lookupFunction<_ToxGroupNewNative, _ToxGroupNewDart>('tox_group_new');
+    _toxGroupSendMessage = _lib.lookupFunction<_ToxGroupSendMessageNative,
+        _ToxGroupSendMessageDart>('tox_group_send_message');
+    _toxGroupInviteFriend = _lib.lookupFunction<_ToxGroupInviteFriendNative,
+        _ToxGroupInviteFriendDart>('tox_group_invite_friend');
+    _toxGroupInviteAccept = _lib.lookupFunction<_ToxGroupInviteAcceptNative,
+        _ToxGroupInviteAcceptDart>('tox_group_invite_accept');
+    _toxGroupLeave =
+        _lib.lookupFunction<_ToxGroupLeaveNative, _ToxGroupLeaveDart>(
+            'tox_group_leave');
+    _toxGroupSelfGetRole = _lib.lookupFunction<_ToxGroupSelfGetRoleNative,
+        _ToxGroupSelfGetRoleDart>('tox_group_self_get_role');
+    _toxGroupGetNameSize = _lib.lookupFunction<_ToxGroupGetNameSizeNative,
+        _ToxGroupGetNameSizeDart>('tox_group_get_name_size');
+    _toxGroupGetName =
+        _lib.lookupFunction<_ToxGroupGetNameNative, _ToxGroupGetNameDart>(
+            'tox_group_get_name');
+    _toxGroupGetChatId =
+        _lib.lookupFunction<_ToxGroupGetChatIdNative, _ToxGroupGetChatIdDart>(
+      'tox_group_get_chat_id',
+    );
+    _toxGroupPeerGetNameSize = _lib.lookupFunction<
+        _ToxGroupPeerGetNameSizeNative,
+        _ToxGroupPeerGetNameSizeDart>('tox_group_peer_get_name_size');
+    _toxGroupPeerGetName = _lib.lookupFunction<_ToxGroupPeerGetNameNative,
+        _ToxGroupPeerGetNameDart>('tox_group_peer_get_name');
+    _toxGroupPeerGetPublicKey = _lib.lookupFunction<
+        _ToxGroupPeerGetPublicKeyNative,
+        _ToxGroupPeerGetPublicKeyDart>('tox_group_peer_get_public_key');
+    _toxGroupPeerGetConnectionStatus = _lib.lookupFunction<
+            _ToxGroupPeerGetConnectionStatusNative,
+            _ToxGroupPeerGetConnectionStatusDart>(
+        'tox_group_peer_get_connection_status');
+    _toxGroupGetGroupListSize = _lib.lookupFunction<
+        _ToxGroupGetGroupListSizeNative,
+        _ToxGroupGetGroupListSizeDart>('tox_group_get_group_list_size');
+    _toxGroupGetGroupList = _lib.lookupFunction<_ToxGroupGetGroupListNative,
+        _ToxGroupGetGroupListDart>('tox_group_get_group_list');
+    _toxCallbackGroupInvite = _lib.lookupFunction<_ToxCallbackGroupInviteNative,
+        _ToxCallbackGroupInviteDart>('tox_callback_group_invite');
+    _toxCallbackGroupMessage = _lib.lookupFunction<
+        _ToxCallbackGroupMessageNative,
+        _ToxCallbackGroupMessageDart>('tox_callback_group_message');
+    _toxCallbackGroupPeerJoin = _lib.lookupFunction<
+        _ToxCallbackGroupPeerJoinNative,
+        _ToxCallbackGroupPeerJoinDart>('tox_callback_group_peer_join');
+    _toxCallbackGroupPeerExit = _lib.lookupFunction<
+        _ToxCallbackGroupPeerExitNative,
+        _ToxCallbackGroupPeerExitDart>('tox_callback_group_peer_exit');
+    _toxCallbackGroupSelfJoin = _lib.lookupFunction<
+        _ToxCallbackGroupSelfJoinNative,
+        _ToxCallbackGroupSelfJoinDart>('tox_callback_group_self_join');
+    _toxCallbackGroupJoinFail = _lib.lookupFunction<
+        _ToxCallbackGroupJoinFailNative,
+        _ToxCallbackGroupJoinFailDart>('tox_callback_group_join_fail');
+    _toxCallbackGroupPeerName = _lib.lookupFunction<
+        _ToxCallbackGroupPeerNameNative,
+        _ToxCallbackGroupPeerNameDart>('tox_callback_group_peer_name');
   }
 
   /// Cria uma nova instância `Tox*`. Se [savedata] for fornecido (bytes lidos
@@ -1438,5 +1902,313 @@ class ToxCoreBindings {
         callback,
   ) {
     _toxCallbackFriendStatusMessage(tox, callback);
+  }
+
+  /// Se a instância está conectada (ou tentando se conectar) a outros
+  /// peers do grupo — útil para depurar sincronização lenta após entrar.
+  bool groupIsConnected(ffi.Pointer<ffi.Void> tox, int groupNumber) {
+    final errorPtr = pkg_ffi.calloc<ffi.Int32>();
+    try {
+      return _toxGroupIsConnected(tox, groupNumber, errorPtr) != 0;
+    } finally {
+      pkg_ffi.calloc.free(errorPtr);
+    }
+  }
+
+  /// Cria um novo grupo privado (só entra quem for convidado por um amigo).
+  /// Retorna o `group_number` (efêmero por sessão) atribuído. Lança
+  /// [StateError] em caso de erro (`TOX_ERR_GROUP_NEW`).
+  int groupNew(ffi.Pointer<ffi.Void> tox, String groupName, String selfName) {
+    final groupNameBytes = utf8.encode(groupName);
+    final selfNameBytes = utf8.encode(selfName);
+    final groupNamePtr = pkg_ffi.calloc<ffi.Uint8>(groupNameBytes.length);
+    final selfNamePtr = pkg_ffi.calloc<ffi.Uint8>(selfNameBytes.length);
+    final errorPtr = pkg_ffi.calloc<ffi.Int32>();
+    try {
+      groupNamePtr.asTypedList(groupNameBytes.length).setAll(0, groupNameBytes);
+      selfNamePtr.asTypedList(selfNameBytes.length).setAll(0, selfNameBytes);
+      final groupNumber = _toxGroupNew(
+        tox,
+        kToxGroupPrivacyStatePrivate,
+        groupNamePtr,
+        groupNameBytes.length,
+        selfNamePtr,
+        selfNameBytes.length,
+        errorPtr,
+      );
+      final errorCode = errorPtr.value;
+      if (errorCode != 0) {
+        throw StateError(
+            'tox_group_new falhou com TOX_ERR_GROUP_NEW = $errorCode');
+      }
+      return groupNumber;
+    } finally {
+      pkg_ffi.calloc.free(groupNamePtr);
+      pkg_ffi.calloc.free(selfNamePtr);
+      pkg_ffi.calloc.free(errorPtr);
+    }
+  }
+
+  /// Envia uma mensagem de texto normal para o grupo. Retorna o
+  /// `message_id` local. Lança [StateError] em caso de erro
+  /// (`TOX_ERR_GROUP_SEND_MESSAGE`) — ex: grupo desconectado.
+  int groupSendMessage(
+      ffi.Pointer<ffi.Void> tox, int groupNumber, String message) {
+    final messageBytes = utf8.encode(message);
+    final messagePtr = pkg_ffi
+        .calloc<ffi.Uint8>(messageBytes.isEmpty ? 1 : messageBytes.length);
+    final errorPtr = pkg_ffi.calloc<ffi.Int32>();
+    try {
+      if (messageBytes.isNotEmpty) {
+        messagePtr.asTypedList(messageBytes.length).setAll(0, messageBytes);
+      }
+      final messageId = _toxGroupSendMessage(
+        tox,
+        groupNumber,
+        kToxMessageTypeNormal,
+        messagePtr,
+        messageBytes.length,
+        errorPtr,
+      );
+      final errorCode = errorPtr.value;
+      if (errorCode != 0) {
+        throw StateError(
+          'tox_group_send_message falhou com TOX_ERR_GROUP_SEND_MESSAGE = $errorCode',
+        );
+      }
+      return messageId;
+    } finally {
+      pkg_ffi.calloc.free(messagePtr);
+      pkg_ffi.calloc.free(errorPtr);
+    }
+  }
+
+  /// Convida um amigo (já conectado) para um grupo. Lança [StateError] em
+  /// caso de erro (`TOX_ERR_GROUP_INVITE_FRIEND`).
+  void groupInviteFriend(
+      ffi.Pointer<ffi.Void> tox, int groupNumber, int friendNumber) {
+    final errorPtr = pkg_ffi.calloc<ffi.Int32>();
+    try {
+      _toxGroupInviteFriend(tox, groupNumber, friendNumber, errorPtr);
+      final errorCode = errorPtr.value;
+      if (errorCode != 0) {
+        throw StateError(
+          'tox_group_invite_friend falhou com TOX_ERR_GROUP_INVITE_FRIEND = $errorCode',
+        );
+      }
+    } finally {
+      pkg_ffi.calloc.free(errorPtr);
+    }
+  }
+
+  /// Aceita um convite de grupo recebido de um amigo (ver
+  /// [ToxGroupInviteCallbackNative]) — `inviteData` deve ser exatamente o
+  /// que veio no callback. Retorna o `group_number` atribuído. Lança
+  /// [StateError] em caso de erro (`TOX_ERR_GROUP_INVITE_ACCEPT`).
+  int groupInviteAccept(ffi.Pointer<ffi.Void> tox, int friendNumber,
+      Uint8List inviteData, String selfName) {
+    final selfNameBytes = utf8.encode(selfName);
+    final inviteDataPtr = pkg_ffi.calloc<ffi.Uint8>(inviteData.length);
+    final selfNamePtr = pkg_ffi.calloc<ffi.Uint8>(selfNameBytes.length);
+    final errorPtr = pkg_ffi.calloc<ffi.Int32>();
+    try {
+      inviteDataPtr.asTypedList(inviteData.length).setAll(0, inviteData);
+      selfNamePtr.asTypedList(selfNameBytes.length).setAll(0, selfNameBytes);
+      final groupNumber = _toxGroupInviteAccept(
+        tox,
+        friendNumber,
+        inviteDataPtr,
+        inviteData.length,
+        selfNamePtr,
+        selfNameBytes.length,
+        ffi.nullptr,
+        0,
+        errorPtr,
+      );
+      final errorCode = errorPtr.value;
+      if (errorCode != 0) {
+        throw StateError(
+          'tox_group_invite_accept falhou com TOX_ERR_GROUP_INVITE_ACCEPT = $errorCode',
+        );
+      }
+      return groupNumber;
+    } finally {
+      pkg_ffi.calloc.free(inviteDataPtr);
+      pkg_ffi.calloc.free(selfNamePtr);
+      pkg_ffi.calloc.free(errorPtr);
+    }
+  }
+
+  /// Sai de um grupo, sem enviar mensagem de despedida.
+  bool groupLeave(ffi.Pointer<ffi.Void> tox, int groupNumber) {
+    final errorPtr = pkg_ffi.calloc<ffi.Int32>();
+    try {
+      final ok = _toxGroupLeave(tox, groupNumber, ffi.nullptr, 0, errorPtr);
+      return ok != 0 && errorPtr.value == 0;
+    } finally {
+      pkg_ffi.calloc.free(errorPtr);
+    }
+  }
+
+  /// Nosso próprio papel no grupo (`TOX_GROUP_ROLE`) — usado para saber se
+  /// somos o fundador (ver [kToxGroupRoleFounder]).
+  int groupSelfGetRole(ffi.Pointer<ffi.Void> tox, int groupNumber) {
+    final errorPtr = pkg_ffi.calloc<ffi.Int32>();
+    try {
+      return _toxGroupSelfGetRole(tox, groupNumber, errorPtr);
+    } finally {
+      pkg_ffi.calloc.free(errorPtr);
+    }
+  }
+
+  /// Nome do grupo (definido na criação), ou string vazia se o
+  /// `group_number` não existir.
+  String groupGetName(ffi.Pointer<ffi.Void> tox, int groupNumber) {
+    final errorPtr = pkg_ffi.calloc<ffi.Int32>();
+    try {
+      final size = _toxGroupGetNameSize(tox, groupNumber, errorPtr);
+      if (errorPtr.value != 0 || size == 0) return '';
+      final ptr = pkg_ffi.calloc<ffi.Uint8>(size);
+      try {
+        _toxGroupGetName(tox, groupNumber, ptr, errorPtr);
+        return utf8.decode(ptr.asTypedList(size));
+      } finally {
+        pkg_ffi.calloc.free(ptr);
+      }
+    } finally {
+      pkg_ffi.calloc.free(errorPtr);
+    }
+  }
+
+  /// Chat ID (hex, 32 bytes) do grupo — chave estável entre execuções,
+  /// equivalente à chave pública de um amigo. `null` se o `group_number`
+  /// não existir.
+  String? groupGetChatIdHex(ffi.Pointer<ffi.Void> tox, int groupNumber) {
+    final chatIdPtr = pkg_ffi.calloc<ffi.Uint8>(kToxGroupChatIdSize);
+    final errorPtr = pkg_ffi.calloc<ffi.Int32>();
+    try {
+      final ok = _toxGroupGetChatId(tox, groupNumber, chatIdPtr, errorPtr);
+      if (ok == 0 || errorPtr.value != 0) return null;
+      return bytesToHex(
+          Uint8List.fromList(chatIdPtr.asTypedList(kToxGroupChatIdSize)));
+    } finally {
+      pkg_ffi.calloc.free(chatIdPtr);
+      pkg_ffi.calloc.free(errorPtr);
+    }
+  }
+
+  /// Nome atual de um peer do grupo, ou string vazia se não disponível.
+  String groupPeerGetName(
+      ffi.Pointer<ffi.Void> tox, int groupNumber, int peerId) {
+    final errorPtr = pkg_ffi.calloc<ffi.Int32>();
+    try {
+      final size = _toxGroupPeerGetNameSize(tox, groupNumber, peerId, errorPtr);
+      if (errorPtr.value != 0 || size == 0) return '';
+      final ptr = pkg_ffi.calloc<ffi.Uint8>(size);
+      try {
+        _toxGroupPeerGetName(tox, groupNumber, peerId, ptr, errorPtr);
+        return utf8.decode(ptr.asTypedList(size));
+      } finally {
+        pkg_ffi.calloc.free(ptr);
+      }
+    } finally {
+      pkg_ffi.calloc.free(errorPtr);
+    }
+  }
+
+  /// Chave pública (hex) de um peer do grupo — permanece a mesma enquanto
+  /// esse peer não sair explicitamente do grupo, mesmo entre reconexões,
+  /// então serve para saber se um contato já é membro (ex: filtrar a lista
+  /// de "convidar contato"). `null` se não disponível.
+  String? groupPeerGetPublicKey(
+      ffi.Pointer<ffi.Void> tox, int groupNumber, int peerId) {
+    final keyPtr = pkg_ffi.calloc<ffi.Uint8>(kToxPublicKeySize);
+    final errorPtr = pkg_ffi.calloc<ffi.Int32>();
+    try {
+      final ok =
+          _toxGroupPeerGetPublicKey(tox, groupNumber, peerId, keyPtr, errorPtr);
+      if (ok == 0 || errorPtr.value != 0) return null;
+      return bytesToHex(
+          Uint8List.fromList(keyPtr.asTypedList(kToxPublicKeySize)));
+    } finally {
+      pkg_ffi.calloc.free(keyPtr);
+      pkg_ffi.calloc.free(errorPtr);
+    }
+  }
+
+  /// Status de conexão de um peer específico do grupo.
+  ToxConnection groupPeerGetConnectionStatus(
+      ffi.Pointer<ffi.Void> tox, int groupNumber, int peerId) {
+    final errorPtr = pkg_ffi.calloc<ffi.Int32>();
+    try {
+      final status =
+          _toxGroupPeerGetConnectionStatus(tox, groupNumber, peerId, errorPtr);
+      return ToxConnection.fromNative(status);
+    } finally {
+      pkg_ffi.calloc.free(errorPtr);
+    }
+  }
+
+  /// Lista os `group_number`s de todos os grupos salvos na identidade atual
+  /// (restaurados automaticamente do savedata ao chamar [createToxInstance]).
+  List<int> getGroupList(ffi.Pointer<ffi.Void> tox) {
+    final size = _toxGroupGetGroupListSize(tox);
+    if (size == 0) return const [];
+    final listPtr = pkg_ffi.calloc<ffi.Uint32>(size);
+    try {
+      _toxGroupGetGroupList(tox, listPtr);
+      return List<int>.generate(size, (i) => listPtr[i]);
+    } finally {
+      pkg_ffi.calloc.free(listPtr);
+    }
+  }
+
+  void setGroupInviteCallback(
+    ffi.Pointer<ffi.Void> tox,
+    ffi.Pointer<ffi.NativeFunction<ToxGroupInviteCallbackNative>> callback,
+  ) {
+    _toxCallbackGroupInvite(tox, callback);
+  }
+
+  void setGroupMessageCallback(
+    ffi.Pointer<ffi.Void> tox,
+    ffi.Pointer<ffi.NativeFunction<ToxGroupMessageCallbackNative>> callback,
+  ) {
+    _toxCallbackGroupMessage(tox, callback);
+  }
+
+  void setGroupPeerJoinCallback(
+    ffi.Pointer<ffi.Void> tox,
+    ffi.Pointer<ffi.NativeFunction<ToxGroupPeerJoinCallbackNative>> callback,
+  ) {
+    _toxCallbackGroupPeerJoin(tox, callback);
+  }
+
+  void setGroupPeerExitCallback(
+    ffi.Pointer<ffi.Void> tox,
+    ffi.Pointer<ffi.NativeFunction<ToxGroupPeerExitCallbackNative>> callback,
+  ) {
+    _toxCallbackGroupPeerExit(tox, callback);
+  }
+
+  void setGroupSelfJoinCallback(
+    ffi.Pointer<ffi.Void> tox,
+    ffi.Pointer<ffi.NativeFunction<ToxGroupSelfJoinCallbackNative>> callback,
+  ) {
+    _toxCallbackGroupSelfJoin(tox, callback);
+  }
+
+  void setGroupJoinFailCallback(
+    ffi.Pointer<ffi.Void> tox,
+    ffi.Pointer<ffi.NativeFunction<ToxGroupJoinFailCallbackNative>> callback,
+  ) {
+    _toxCallbackGroupJoinFail(tox, callback);
+  }
+
+  void setGroupPeerNameCallback(
+    ffi.Pointer<ffi.Void> tox,
+    ffi.Pointer<ffi.NativeFunction<ToxGroupPeerNameCallbackNative>> callback,
+  ) {
+    _toxCallbackGroupPeerName(tox, callback);
   }
 }

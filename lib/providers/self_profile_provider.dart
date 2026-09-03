@@ -8,11 +8,16 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../dev_profile.dart';
 import '../tox_events.dart';
 import 'tox_events_provider.dart';
 import 'tox_manager_provider.dart';
 
-const String _kAvatarPathPrefsKey = 'talksnap.avatarPath';
+/// Com sufixo de perfil de dev (ver dev_profile.dart) — sem isso, duas
+/// instâncias do app rodando na mesma máquina (`TALKSNAP_PROFILE` distintos)
+/// compartilhariam o mesmo avatar salvo, já que SharedPreferences no
+/// Windows não é isolado por processo, só por aplicativo.
+final String _kAvatarPathPrefsKey = withDevProfileSuffix('talksnap.avatarPath');
 
 class SelfProfile {
   const SelfProfile({

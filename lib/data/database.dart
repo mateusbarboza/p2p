@@ -61,12 +61,83 @@ class FileTransfers extends Table {
   DateTimeColumn get timestamp => dateTime().withDefault(currentDateAndTime)();
 }
 
-@DriftDatabase(tables: [Contacts, Messages, FileTransfers])
+/// Um grupo (chat NGC). A chave estável é [chatIdHex] (32 bytes, hex) —
+/// equivalente a uma "chave pública" de grupo; o `group_number` que o
+/// toxcore usa em tempo de execução é efêmero por sessão e nunca é
+/// persistido aqui.
+class Groups extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get chatIdHex => text().unique()();
+  TextColumn get name => text()();
+  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
+}
+
+/// Histórico de mensagens de um grupo, identificado sempre por
+/// [chatIdHex] (nunca por `group_number`). Diferente de [Messages] (1:1),
+/// guarda também o nome de quem enviou — necessário para atribuir cada
+/// mensagem a um peer numa conversa com mais de duas pessoas.
+class GroupMessages extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get chatIdHex => text()();
+  BoolColumn get outgoing => boolean()();
+  TextColumn get senderName => text()();
+  TextColumn get body => text()();
+  DateTimeColumn get timestamp => dateTime().withDefault(currentDateAndTime)();
+}
+
+/// Roster de quem já apareceu como peer num grupo, por chave — persiste
+/// mesmo que o peer esteja offline agora, diferente do estado "ao vivo" de
+/// conexão (nunca persistido, ver groups_provider.dart). Sem isso, a
+/// contagem de membros voltaria a "1" toda vez que o app reabre, até cada
+/// peer reconectar e disparar `group_peer_join` de novo.
+///
+/// IMPORTANTE: [publicKeyHex] aqui é a chave que o toxcore usa para
+/// identificar o peer DENTRO do grupo (`tox_group_peer_get_public_key`) —
+/// estável entre reconexões, mas **diferente** da chave pública Tox do
+/// amigo (por design de privacidade do NGC). Não dá pra cruzar isto com
+/// [Contacts.publicKeyHex]; para "esse contato já foi convidado" ver
+/// [GroupInvitedContacts] em vez disso.
+class GroupMembers extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get chatIdHex => text()();
+  TextColumn get publicKeyHex => text()();
+  TextColumn get name => text()();
+
+  @override
+  List<Set<Column>> get uniqueKeys => [
+        {chatIdHex, publicKeyHex}
+      ];
+}
+
+/// Contatos (chave pública do AMIGO, não do peer dentro do grupo — ver
+/// [GroupMembers]) que já foram convidados para um grupo — usado só para
+/// não oferecer convidar de novo o mesmo contato na lista de "convidar
+/// contato".
+class GroupInvitedContacts extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get chatIdHex => text()();
+  TextColumn get contactPublicKeyHex => text()();
+
+  @override
+  List<Set<Column>> get uniqueKeys => [
+        {chatIdHex, contactPublicKeyHex}
+      ];
+}
+
+@DriftDatabase(tables: [
+  Contacts,
+  Messages,
+  FileTransfers,
+  Groups,
+  GroupMessages,
+  GroupMembers,
+  GroupInvitedContacts,
+])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 6;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -77,6 +148,16 @@ class AppDatabase extends _$AppDatabase {
           }
           if (from < 3) {
             await m.createTable(fileTransfers);
+          }
+          if (from < 4) {
+            await m.createTable(groups);
+            await m.createTable(groupMessages);
+          }
+          if (from < 5) {
+            await m.createTable(groupMembers);
+          }
+          if (from < 6) {
+            await m.createTable(groupInvitedContacts);
           }
         },
       );

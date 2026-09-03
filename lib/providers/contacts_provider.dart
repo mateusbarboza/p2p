@@ -108,6 +108,17 @@ class ContactsNotifier extends Notifier<List<ContactViewModel>> {
       case ToxMessageReadReceiptEvent():
       case ToxFileTransferEvent():
       case ToxSavedataFlushedEvent():
+      case ToxGroupCreatedEvent():
+      case ToxGroupSelfJoinedEvent():
+      case ToxGroupJoinFailedEvent():
+      case ToxGroupInviteEvent():
+      case ToxGroupMessageEvent():
+      case ToxGroupMessageSentEvent():
+      case ToxGroupPeerJoinedEvent():
+      case ToxGroupPeerLeftEvent():
+      case ToxGroupPeerNameEvent():
+      case ToxGroupLeftEvent():
+      case ToxGroupInviteSentEvent():
         break;
     }
   }

@@ -55,8 +55,85 @@ class ChatScreen extends ConsumerStatefulWidget {
   ConsumerState<ChatScreen> createState() => _ChatScreenState();
 }
 
+const List<String> _kQuickEmojis = [
+  '😀',
+  '😂',
+  '😍',
+  '😉',
+  '😊',
+  '🙂',
+  '😎',
+  '🤔',
+  '😢',
+  '😭',
+  '😡',
+  '😱',
+  '🥳',
+  '😴',
+  '🤗',
+  '🙄',
+  '👍',
+  '👎',
+  '👏',
+  '🙏',
+  '💪',
+  '👋',
+  '✌️',
+  '🤝',
+  '❤️',
+  '💔',
+  '🔥',
+  '✨',
+  '🎉',
+  '⭐',
+  '💯',
+  '☕',
+];
+
 class _ChatScreenState extends ConsumerState<ChatScreen> {
   final TextEditingController _messageController = TextEditingController();
+
+  /// Insere o emoji na posição do cursor em vez de sempre no fim — assim
+  /// funciona também quando a pessoa já digitou algo e move o cursor antes
+  /// de abrir o seletor.
+  void _insertEmoji(String emoji) {
+    final selection = _messageController.selection;
+    final text = _messageController.text;
+    final start = selection.start >= 0 ? selection.start : text.length;
+    final end = selection.end >= 0 ? selection.end : text.length;
+    final newText = text.replaceRange(start, end, emoji);
+    _messageController.value = TextEditingValue(
+      text: newText,
+      selection: TextSelection.collapsed(offset: start + emoji.length),
+    );
+  }
+
+  Future<void> _showEmojiPicker() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: GridView.count(
+            shrinkWrap: true,
+            crossAxisCount: 8,
+            children: [
+              for (final emoji in _kQuickEmojis)
+                InkWell(
+                  onTap: () {
+                    _insertEmoji(emoji);
+                    Navigator.pop(context);
+                  },
+                  child: Center(
+                    child: Text(emoji, style: const TextStyle(fontSize: 24)),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   void _send() {
     final text = _messageController.text.trim();
@@ -177,6 +254,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   IconButton(
                       onPressed: _attachFile,
                       icon: const Icon(Icons.attach_file)),
+                  IconButton(
+                      onPressed: _showEmojiPicker,
+                      icon: const Icon(Icons.emoji_emotions_outlined)),
                   Expanded(
                     child: TextField(
                       controller: _messageController,

@@ -77,6 +77,17 @@ class MessagesSyncNotifier extends Notifier<void> {
       case ToxSelfProfileEvent():
       case ToxFriendProfileEvent():
       case ToxSavedataFlushedEvent():
+      case ToxGroupCreatedEvent():
+      case ToxGroupSelfJoinedEvent():
+      case ToxGroupJoinFailedEvent():
+      case ToxGroupInviteEvent():
+      case ToxGroupMessageEvent():
+      case ToxGroupMessageSentEvent():
+      case ToxGroupPeerJoinedEvent():
+      case ToxGroupPeerLeftEvent():
+      case ToxGroupPeerNameEvent():
+      case ToxGroupLeftEvent():
+      case ToxGroupInviteSentEvent():
         break;
     }
   }

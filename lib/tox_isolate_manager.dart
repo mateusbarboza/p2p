@@ -198,6 +198,35 @@ class ToxIsolateManager {
     _sendCommand(SetProfileCommand(name: name, statusMessage: statusMessage));
   }
 
+  /// Cria um novo grupo privado. O resultado chega como
+  /// [ToxGroupCreatedEvent].
+  void createGroup(String groupName) {
+    _sendCommand(CreateGroupCommand(groupName: groupName));
+  }
+
+  /// Convida um contato (chave pública) para um grupo (Chat ID).
+  void inviteToGroup(String chatIdHex, String contactPublicKeyHex) {
+    _sendCommand(InviteToGroupCommand(
+        chatIdHex: chatIdHex, contactPublicKeyHex: contactPublicKeyHex));
+  }
+
+  /// Aceita um convite de grupo recebido (ver [ToxGroupInviteEvent]).
+  void acceptGroupInvite(String fromPublicKeyHex, Uint8List inviteData) {
+    _sendCommand(AcceptGroupInviteCommand(
+        fromPublicKeyHex: fromPublicKeyHex, inviteData: inviteData));
+  }
+
+  /// Envia uma mensagem de texto para um grupo (Chat ID).
+  void sendGroupMessage(String chatIdHex, String message) {
+    _sendCommand(
+        SendGroupMessageCommand(chatIdHex: chatIdHex, message: message));
+  }
+
+  /// Sai de um grupo existente.
+  void leaveGroup(String chatIdHex) {
+    _sendCommand(LeaveGroupCommand(chatIdHex: chatIdHex));
+  }
+
   /// Força gravar o savedata no disco agora, em vez de esperar o próximo
   /// ciclo periódico. Chamado antes de exportar um backup de identidade —
   /// espera o [ToxSavedataFlushedEvent] de confirmação antes de ler o
@@ -534,6 +563,147 @@ class ToxIsolateManager {
     );
   }
 
+  static void _onGroupInviteNative(
+    ffi.Pointer<ffi.Void> tox,
+    int friendNumber,
+    ffi.Pointer<ffi.Uint8> inviteData,
+    int inviteDataLength,
+    ffi.Pointer<ffi.Uint8> groupName,
+    int groupNameLength,
+    ffi.Pointer<ffi.Void> userData,
+  ) {
+    final bindings = ToxCoreBindings.instance;
+    final publicKeyHex = bindings.friendGetPublicKey(tox, friendNumber);
+    if (publicKeyHex == null) return;
+    _networkEventSendPort?.send(
+      ToxGroupInviteEvent(
+        fromPublicKeyHex: publicKeyHex,
+        groupName: bindings.readUtf8(groupName, groupNameLength),
+        inviteData:
+            Uint8List.fromList(inviteData.asTypedList(inviteDataLength)),
+      ),
+    );
+  }
+
+  static void _onGroupMessageNative(
+    ffi.Pointer<ffi.Void> tox,
+    int groupNumber,
+    int peerId,
+    int messageType,
+    ffi.Pointer<ffi.Uint8> message,
+    int messageLength,
+    int messageId,
+    ffi.Pointer<ffi.Void> userData,
+  ) {
+    final bindings = ToxCoreBindings.instance;
+    final chatIdHex = bindings.groupGetChatIdHex(tox, groupNumber);
+    if (chatIdHex == null) return;
+    _networkEventSendPort?.send(
+      ToxGroupMessageEvent(
+        chatIdHex: chatIdHex,
+        peerId: peerId,
+        senderName: bindings.groupPeerGetName(tox, groupNumber, peerId),
+        message: bindings.readUtf8(message, messageLength),
+        receivedAt: DateTime.now(),
+      ),
+    );
+  }
+
+  static void _onGroupPeerJoinNative(
+    ffi.Pointer<ffi.Void> tox,
+    int groupNumber,
+    int peerId,
+    ffi.Pointer<ffi.Void> userData,
+  ) {
+    final bindings = ToxCoreBindings.instance;
+    final chatIdHex = bindings.groupGetChatIdHex(tox, groupNumber);
+    if (chatIdHex == null) return;
+    final peerPublicKeyHex =
+        bindings.groupPeerGetPublicKey(tox, groupNumber, peerId);
+    _networkEventSendPort?.send(
+      ToxGroupPeerJoinedEvent(
+        chatIdHex: chatIdHex,
+        peerId: peerId,
+        peerName: bindings.groupPeerGetName(tox, groupNumber, peerId),
+        connection:
+            bindings.groupPeerGetConnectionStatus(tox, groupNumber, peerId),
+        publicKeyHex: peerPublicKeyHex,
+      ),
+    );
+  }
+
+  static void _onGroupPeerExitNative(
+    ffi.Pointer<ffi.Void> tox,
+    int groupNumber,
+    int peerId,
+    int exitType,
+    ffi.Pointer<ffi.Uint8> name,
+    int nameLength,
+    ffi.Pointer<ffi.Uint8> partMessage,
+    int partMessageLength,
+    ffi.Pointer<ffi.Void> userData,
+  ) {
+    final bindings = ToxCoreBindings.instance;
+    final chatIdHex = bindings.groupGetChatIdHex(tox, groupNumber);
+    if (chatIdHex == null) return;
+    _networkEventSendPort?.send(
+      ToxGroupPeerLeftEvent(
+        chatIdHex: chatIdHex,
+        peerId: peerId,
+        peerName: bindings.readUtf8(name, nameLength),
+      ),
+    );
+  }
+
+  static void _onGroupSelfJoinNative(
+    ffi.Pointer<ffi.Void> tox,
+    int groupNumber,
+    ffi.Pointer<ffi.Void> userData,
+  ) {
+    final bindings = ToxCoreBindings.instance;
+    final chatIdHex = bindings.groupGetChatIdHex(tox, groupNumber);
+    if (chatIdHex == null) return;
+    _networkEventSendPort?.send(
+      ToxGroupSelfJoinedEvent(
+        chatIdHex: chatIdHex,
+        name: bindings.groupGetName(tox, groupNumber),
+        isFounder:
+            bindings.groupSelfGetRole(tox, groupNumber) == kToxGroupRoleFounder,
+      ),
+    );
+  }
+
+  static void _onGroupJoinFailNative(
+    ffi.Pointer<ffi.Void> tox,
+    int groupNumber,
+    int failType,
+    ffi.Pointer<ffi.Void> userData,
+  ) {
+    _networkEventSendPort?.send(
+      ToxGroupJoinFailedEvent(reason: 'TOX_GROUP_JOIN_FAIL = $failType'),
+    );
+  }
+
+  static void _onGroupPeerNameNative(
+    ffi.Pointer<ffi.Void> tox,
+    int groupNumber,
+    int peerId,
+    ffi.Pointer<ffi.Uint8> name,
+    int nameLength,
+    ffi.Pointer<ffi.Void> userData,
+  ) {
+    final bindings = ToxCoreBindings.instance;
+    final chatIdHex = bindings.groupGetChatIdHex(tox, groupNumber);
+    if (chatIdHex == null) return;
+    _networkEventSendPort?.send(
+      ToxGroupPeerNameEvent(
+        chatIdHex: chatIdHex,
+        peerId: peerId,
+        peerName: bindings.readUtf8(name, nameLength),
+      ),
+    );
+  }
+
   static void _toxNetworkIsolateEntryPoint(_IsolateBootstrapArgs args) {
     final mainSendPort = args.mainSendPort;
     final isolateReceivePort = ReceivePort();
@@ -574,6 +744,19 @@ class ToxIsolateManager {
         if (bindings.friendGetPublicKey(currentTox, friendNumber) ==
             publicKeyHex) {
           return friendNumber;
+        }
+      }
+      return null;
+    }
+
+    // Resolve o group_number atual (efêmero) a partir do Chat ID (estável)
+    // — mesmo raciocínio de findFriendNumberByPublicKey.
+    int? findGroupNumberByChatId(String chatIdHex) {
+      final currentTox = tox;
+      if (currentTox == null) return null;
+      for (final groupNumber in bindings.getGroupList(currentTox)) {
+        if (bindings.groupGetChatIdHex(currentTox, groupNumber) == chatIdHex) {
+          return groupNumber;
         }
       }
       return null;
@@ -807,6 +990,109 @@ class ToxIsolateManager {
           unawaited(persistSavedata().then((_) {
             mainSendPort.send(const ToxSavedataFlushedEvent());
           }));
+
+        case CreateGroupCommand(:final groupName):
+          final currentTox = tox;
+          if (currentTox == null) return;
+          try {
+            final selfName = bindings.getSelfName(currentTox);
+            final groupNumber =
+                bindings.groupNew(currentTox, groupName, selfName);
+            final chatIdHex =
+                bindings.groupGetChatIdHex(currentTox, groupNumber);
+            if (chatIdHex != null) {
+              mainSendPort.send(
+                ToxGroupCreatedEvent(
+                  chatIdHex: chatIdHex,
+                  name: groupName,
+                  isFounder:
+                      bindings.groupSelfGetRole(currentTox, groupNumber) ==
+                          kToxGroupRoleFounder,
+                ),
+              );
+            }
+            unawaited(persistSavedata());
+          } catch (e) {
+            mainSendPort.send(ToxGroupJoinFailedEvent(reason: e.toString()));
+          }
+
+        case InviteToGroupCommand(:final chatIdHex, :final contactPublicKeyHex):
+          final currentTox = tox;
+          if (currentTox == null) return;
+          final groupNumber = findGroupNumberByChatId(chatIdHex);
+          final friendNumber = findFriendNumberByPublicKey(contactPublicKeyHex);
+          if (groupNumber == null || friendNumber == null) return;
+          try {
+            bindings.groupInviteFriend(currentTox, groupNumber, friendNumber);
+            mainSendPort.send(
+              ToxGroupInviteSentEvent(
+                chatIdHex: chatIdHex,
+                contactPublicKeyHex: contactPublicKeyHex,
+              ),
+            );
+          } catch (_) {
+            // Falha de convite não tem uma tela dedicada nesta rodada — o
+            // contato simplesmente não recebe o convite.
+          }
+
+        case AcceptGroupInviteCommand(
+            :final fromPublicKeyHex,
+            :final inviteData
+          ):
+          final currentTox = tox;
+          if (currentTox == null) return;
+          final friendNumber = findFriendNumberByPublicKey(fromPublicKeyHex);
+          if (friendNumber == null) return;
+          try {
+            final selfName = bindings.getSelfName(currentTox);
+            bindings.groupInviteAccept(
+                currentTox, friendNumber, inviteData, selfName);
+            unawaited(persistSavedata());
+          } catch (e) {
+            mainSendPort.send(ToxGroupJoinFailedEvent(reason: e.toString()));
+          }
+
+        case SendGroupMessageCommand(:final chatIdHex, :final message):
+          final currentTox = tox;
+          if (currentTox == null) return;
+          final groupNumber = findGroupNumberByChatId(chatIdHex);
+          if (groupNumber == null) {
+            mainSendPort.send(
+              ToxGroupMessageSentEvent.failure(
+                chatIdHex: chatIdHex,
+                message: message,
+                errorMessage: 'Grupo não encontrado.',
+              ),
+            );
+            return;
+          }
+          try {
+            bindings.groupSendMessage(currentTox, groupNumber, message);
+            mainSendPort.send(
+              ToxGroupMessageSentEvent.success(
+                chatIdHex: chatIdHex,
+                message: message,
+                sentAt: DateTime.now(),
+              ),
+            );
+          } catch (e) {
+            mainSendPort.send(
+              ToxGroupMessageSentEvent.failure(
+                chatIdHex: chatIdHex,
+                message: message,
+                errorMessage: e.toString(),
+              ),
+            );
+          }
+
+        case LeaveGroupCommand(:final chatIdHex):
+          final currentTox = tox;
+          if (currentTox == null) return;
+          final groupNumber = findGroupNumberByChatId(chatIdHex);
+          if (groupNumber == null) return;
+          bindings.groupLeave(currentTox, groupNumber);
+          mainSendPort.send(ToxGroupLeftEvent(chatIdHex: chatIdHex));
+          unawaited(persistSavedata());
       }
     });
 
@@ -886,6 +1172,41 @@ class ToxIsolateManager {
           _onFriendStatusMessageNative,
         ),
       );
+      bindings.setGroupInviteCallback(
+        currentTox,
+        ffi.Pointer.fromFunction<ToxGroupInviteCallbackNative>(
+            _onGroupInviteNative),
+      );
+      bindings.setGroupMessageCallback(
+        currentTox,
+        ffi.Pointer.fromFunction<ToxGroupMessageCallbackNative>(
+            _onGroupMessageNative),
+      );
+      bindings.setGroupPeerJoinCallback(
+        currentTox,
+        ffi.Pointer.fromFunction<ToxGroupPeerJoinCallbackNative>(
+            _onGroupPeerJoinNative),
+      );
+      bindings.setGroupPeerExitCallback(
+        currentTox,
+        ffi.Pointer.fromFunction<ToxGroupPeerExitCallbackNative>(
+            _onGroupPeerExitNative),
+      );
+      bindings.setGroupSelfJoinCallback(
+        currentTox,
+        ffi.Pointer.fromFunction<ToxGroupSelfJoinCallbackNative>(
+            _onGroupSelfJoinNative),
+      );
+      bindings.setGroupJoinFailCallback(
+        currentTox,
+        ffi.Pointer.fromFunction<ToxGroupJoinFailCallbackNative>(
+            _onGroupJoinFailNative),
+      );
+      bindings.setGroupPeerNameCallback(
+        currentTox,
+        ffi.Pointer.fromFunction<ToxGroupPeerNameCallbackNative>(
+            _onGroupPeerNameNative),
+      );
 
       // Envia o Talksnap ID assim que ele é conhecido — a UI só precisa disso
       // uma vez (é o mesmo ID a cada execução, agora que persiste em disco).
@@ -929,9 +1250,25 @@ class ToxIsolateManager {
         );
       }
 
+      // Grupos já existentes (restaurados do savedata): reusa
+      // ToxGroupSelfJoinedEvent, o mesmo evento de "entrei no grupo", já que
+      // do ponto de vista da UI o efeito é idêntico — o estado de membros ao
+      // vivo é reconstruído conforme os peers reconectam.
+      for (final groupNumber in bindings.getGroupList(currentTox)) {
+        final chatIdHex = bindings.groupGetChatIdHex(currentTox, groupNumber);
+        if (chatIdHex == null) continue;
+        mainSendPort.send(
+          ToxGroupSelfJoinedEvent(
+            chatIdHex: chatIdHex,
+            name: bindings.groupGetName(currentTox, groupNumber),
+            isFounder: bindings.groupSelfGetRole(currentTox, groupNumber) ==
+                kToxGroupRoleFounder,
+          ),
+        );
+      }
+
       var iterationsSinceLastSave = 0;
       var lastBootstrapAttempt = DateTime.now();
-
       while (running) {
         bindings.toxIterate(currentTox, ffi.nullptr);
 
