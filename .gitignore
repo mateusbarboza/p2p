@@ -1,0 +1,37 @@
+# Flutter/Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+*.lock
+!pubspec.lock
+
+# Native build outputs
+native/build/
+native/output/
+native/third_party/vcpkg/buildtrees/
+native/third_party/vcpkg/downloads/
+native/third_party/vcpkg/packages/
+native/third_party/vcpkg/installed/
+native/third_party/vcpkg/vcpkg.exe
+native/third_party/vcpkg/vcpkg
+
+# Flutter platform folders: caminhos/ferramentas locais da máquina, não do projeto
+**/ephemeral/
+android/local.properties
+android/.gradle/
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.podspec
+macos/Pods/
+macos/.symlinks/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+Thumbs.db
+.DS_Store

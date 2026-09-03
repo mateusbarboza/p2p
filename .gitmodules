@@ -1,0 +1,6 @@
+[submodule "native/third_party/toxcore"]
+	path = native/third_party/toxcore
+	url = https://github.com/TokTok/c-toxcore.git
+[submodule "native/third_party/vcpkg"]
+	path = native/third_party/vcpkg
+	url = https://github.com/microsoft/vcpkg.git
