@@ -10,6 +10,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -68,41 +69,6 @@ class ChatScreen extends ConsumerStatefulWidget {
   @override
   ConsumerState<ChatScreen> createState() => _ChatScreenState();
 }
-
-const List<String> _kQuickEmojis = [
-  '😀',
-  '😂',
-  '😍',
-  '😉',
-  '😊',
-  '🙂',
-  '😎',
-  '🤔',
-  '😢',
-  '😭',
-  '😡',
-  '😱',
-  '🥳',
-  '😴',
-  '🤗',
-  '🙄',
-  '👍',
-  '👎',
-  '👏',
-  '🙏',
-  '💪',
-  '👋',
-  '✌️',
-  '🤝',
-  '❤️',
-  '💔',
-  '🔥',
-  '✨',
-  '🎉',
-  '⭐',
-  '💯',
-  '☕',
-];
 
 class _ChatScreenState extends ConsumerState<ChatScreen> {
   final TextEditingController _messageController = TextEditingController();
@@ -173,23 +139,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     await showModalBottomSheet<void>(
       context: context,
       builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: GridView.count(
-            shrinkWrap: true,
-            crossAxisCount: 8,
-            children: [
-              for (final emoji in _kQuickEmojis)
-                InkWell(
-                  onTap: () {
-                    _insertEmoji(emoji);
-                    Navigator.pop(context);
-                  },
-                  child: Center(
-                    child: Text(emoji, style: const TextStyle(fontSize: 24)),
-                  ),
-                ),
-            ],
+        child: EmojiPicker(
+          onEmojiSelected: (category, emoji) {
+            _insertEmoji(emoji.emoji);
+            Navigator.pop(context);
+          },
+          config: const Config(
+            height: 320,
+            checkPlatformCompatibility: false,
+            emojiViewConfig: EmojiViewConfig(emojiSizeMax: 28),
           ),
         ),
       ),

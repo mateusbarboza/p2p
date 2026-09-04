@@ -69,9 +69,15 @@ class CallNotifier extends Notifier<CallState> {
   AudioSource? _playbackSource;
 
   /// Toque sintetizado (sem precisar de nenhum arquivo de áudio) tocado em
-  /// loop enquanto a chamada está chamando/tocando, dos dois lados.
+  /// loop enquanto a chamada está chamando/tocando, dos dois lados — imita a
+  /// campainha mecânica de telefone antigo: um trinado (alterna rápido entre
+  /// duas frequências próximas) que liga e desliga em rajadas curtas, com
+  /// uma pausa longa entre elas (ver [_onRingtoneTick]).
   AudioSource? _ringtoneSource;
   SoundHandle? _ringtoneHandle;
+  Timer? _ringtoneTimer;
+  int _ringtoneElapsedMs = 0;
+  bool _ringtoneWarbleHigh = false;
 
   @override
   CallState build() {
@@ -200,9 +206,22 @@ class CallNotifier extends Notifier<CallState> {
         );
   }
 
-  /// Toque de chamada sintetizado (tom senoidal em loop) — toca tanto pra
-  /// quem está ligando ("chamando...") quanto pra quem está recebendo
-  /// ("chamada recebida"), sem precisar embutir nenhum arquivo de áudio.
+  /// Duração de uma rajada de trinado ("brrrim") e da pausa entre rajadas —
+  /// mesma cadência clássica de campainha de telefone antigo: toca curto,
+  /// silêncio bem mais longo, repete.
+  static const _kRingBurstMs = 1200;
+  static const _kRingCycleMs = 4200;
+
+  /// Duas frequências próximas alternadas rápido durante a rajada — é essa
+  /// alternância (trinado) que dá o timbre de campainha mecânica, em vez de
+  /// um tom eletrônico contínuo.
+  static const _kRingLowHz = 900.0;
+  static const _kRingHighHz = 1200.0;
+  static const _kRingWarbleMs = 45;
+
+  /// Toque de chamada sintetizado (sem precisar de nenhum arquivo de áudio)
+  /// — toca tanto pra quem está ligando ("chamando...") quanto pra quem está
+  /// recebendo ("chamada recebida"), dos dois lados.
   Future<void> _startRingtone() async {
     // ignore: avoid_print
     print('[call-debug] _startRingtone()');
@@ -210,20 +229,44 @@ class CallNotifier extends Notifier<CallState> {
       await SoLoud.instance.init();
     }
     final source = await SoLoud.instance.loadWaveform(
-      WaveForm.sin,
+      WaveForm.triangle,
       false,
       0,
       0,
     );
-    SoLoud.instance.setWaveformFreq(source, 440);
+    SoLoud.instance.setWaveformFreq(source, _kRingLowHz);
     _ringtoneSource = source;
     _ringtoneHandle = SoLoud.instance.play(source, looping: true);
+    _ringtoneElapsedMs = 0;
+    _ringtoneWarbleHigh = false;
+    _ringtoneTimer = Timer.periodic(
+      const Duration(milliseconds: _kRingWarbleMs),
+      (_) => _onRingtoneTick(),
+    );
+  }
+
+  void _onRingtoneTick() {
+    final handle = _ringtoneHandle;
+    final source = _ringtoneSource;
+    if (handle == null || source == null) return;
+    _ringtoneElapsedMs = (_ringtoneElapsedMs + _kRingWarbleMs) % _kRingCycleMs;
+    final ringing = _ringtoneElapsedMs < _kRingBurstMs;
+    SoLoud.instance.setPause(handle, !ringing);
+    if (ringing) {
+      _ringtoneWarbleHigh = !_ringtoneWarbleHigh;
+      SoLoud.instance.setWaveformFreq(
+        source,
+        _ringtoneWarbleHigh ? _kRingHighHz : _kRingLowHz,
+      );
+    }
   }
 
   Future<void> _stopRingtone() async {
     // ignore: avoid_print
     print('[call-debug] _stopRingtone() handle=$_ringtoneHandle '
         'source=$_ringtoneSource');
+    _ringtoneTimer?.cancel();
+    _ringtoneTimer = null;
     final handle = _ringtoneHandle;
     _ringtoneHandle = null;
     if (handle != null) {
