@@ -11,7 +11,7 @@
 // novo tipo de evento/comando adicionado em fase futura (mensagens, arquivos,
 // chamadas) nao passa despercebido em algum consumidor.
 
-import 'dart:typed_data' show Uint8List;
+import 'dart:typed_data' show Int16List, Uint8List;
 
 import 'tox_bindings.dart' show ToxConnection;
 
@@ -96,6 +96,57 @@ class ToxFriendConnectionEvent extends ToxNetworkEvent {
   final int friendNumber;
   final String publicKeyHex;
   final ToxConnection connection;
+}
+
+/// Um amigo começou ou parou de digitar uma mensagem pra nós (`tox_callback_
+/// friend_typing`) — só ao vivo, nunca persistido (não faz sentido guardar
+/// "estava digitando" no histórico).
+class ToxFriendTypingEvent extends ToxNetworkEvent {
+  const ToxFriendTypingEvent({
+    required this.publicKeyHex,
+    required this.isTyping,
+  });
+
+  final String publicKeyHex;
+  final bool isTyping;
+}
+
+/// Um contato está nos ligando (`toxav_callback_call`) — só áudio nesta
+/// fase, então nem carrega `audioEnabled`/`videoEnabled` (sempre tratamos
+/// como pedido de chamada de voz).
+class ToxCallIncomingEvent extends ToxNetworkEvent {
+  const ToxCallIncomingEvent({required this.publicKeyHex});
+  final String publicKeyHex;
+}
+
+/// Mudança de estado de uma chamada em andamento (`toxav_callback_call_
+/// state`) — já traduzido do bitmask `Toxav_Friend_Call_State` pros dois
+/// bools que a UI precisa: `active` (chamada realmente conectada, trocando
+/// áudio) e `ended` (encerrada, por qualquer motivo — recusada, caiu,
+/// desligada pelo outro lado).
+class ToxCallStateEvent extends ToxNetworkEvent {
+  const ToxCallStateEvent({
+    required this.publicKeyHex,
+    required this.active,
+    required this.ended,
+  });
+
+  final String publicKeyHex;
+  final bool active;
+  final bool ended;
+}
+
+/// Um frame de áudio decodificado chegou de um contato em chamada
+/// (`toxav_callback_audio_receive_frame`) — pronto pra tocar, o toxav já
+/// cuidou do Opus por dentro. Mono, 48kHz (ver call_provider.dart).
+class ToxCallAudioFrameEvent extends ToxNetworkEvent {
+  const ToxCallAudioFrameEvent({
+    required this.publicKeyHex,
+    required this.samples,
+  });
+
+  final String publicKeyHex;
+  final Int16List samples;
 }
 
 /// Resultado de um AddFriendCommand/AcceptFriendRequestCommand: sucesso (com
@@ -425,6 +476,47 @@ class SendMessageCommand extends ToxNetworkCommand {
 
   final String publicKeyHex;
   final String message;
+}
+
+/// Avisa um contato que estamos (ou paramos de) digitar uma mensagem pra
+/// ele — chamado a cada tecla digitada no campo de mensagem (com debounce
+/// na UI) e ao limpar o campo/enviar.
+class SetTypingCommand extends ToxNetworkCommand {
+  const SetTypingCommand({required this.publicKeyHex, required this.isTyping});
+
+  final String publicKeyHex;
+  final bool isTyping;
+}
+
+/// Liga (voz, sem vídeo) para um contato já conectado.
+class StartCallCommand extends ToxNetworkCommand {
+  const StartCallCommand({required this.publicKeyHex});
+  final String publicKeyHex;
+}
+
+/// Atende uma chamada recebida (voz, sem vídeo).
+class AnswerCallCommand extends ToxNetworkCommand {
+  const AnswerCallCommand({required this.publicKeyHex});
+  final String publicKeyHex;
+}
+
+/// Encerra ou recusa uma chamada (ativa ou ainda tocando) com um contato.
+class HangUpCallCommand extends ToxNetworkCommand {
+  const HangUpCallCommand({required this.publicKeyHex});
+  final String publicKeyHex;
+}
+
+/// Manda um frame de áudio PCM16 capturado do microfone (mono, 48kHz) pro
+/// contato em chamada — chamado a cada ~20ms enquanto o microfone não
+/// está mudo (ver call_provider.dart).
+class SendCallAudioFrameCommand extends ToxNetworkCommand {
+  const SendCallAudioFrameCommand({
+    required this.publicKeyHex,
+    required this.samples,
+  });
+
+  final String publicKeyHex;
+  final Int16List samples;
 }
 
 /// Oferece um arquivo local a um contato.

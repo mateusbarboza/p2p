@@ -2391,6 +2391,319 @@ class GroupInvitedContactsCompanion
   }
 }
 
+class $CallLogsTable extends CallLogs with TableInfo<$CallLogsTable, CallLog> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $CallLogsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+      'id', aliasedName, false,
+      hasAutoIncrement: true,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('PRIMARY KEY AUTOINCREMENT'));
+  static const VerificationMeta _contactPublicKeyHexMeta =
+      const VerificationMeta('contactPublicKeyHex');
+  @override
+  late final GeneratedColumn<String> contactPublicKeyHex =
+      GeneratedColumn<String>('contact_public_key_hex', aliasedName, false,
+          type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _outgoingMeta =
+      const VerificationMeta('outgoing');
+  @override
+  late final GeneratedColumn<bool> outgoing = GeneratedColumn<bool>(
+      'outgoing', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: true,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("outgoing" IN (0, 1))'));
+  static const VerificationMeta _kindMeta = const VerificationMeta('kind');
+  @override
+  late final GeneratedColumn<String> kind = GeneratedColumn<String>(
+      'kind', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _timestampMeta =
+      const VerificationMeta('timestamp');
+  @override
+  late final GeneratedColumn<DateTime> timestamp = GeneratedColumn<DateTime>(
+      'timestamp', aliasedName, false,
+      type: DriftSqlType.dateTime,
+      requiredDuringInsert: false,
+      defaultValue: currentDateAndTime);
+  @override
+  List<GeneratedColumn> get $columns =>
+      [id, contactPublicKeyHex, outgoing, kind, timestamp];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'call_logs';
+  @override
+  VerificationContext validateIntegrity(Insertable<CallLog> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('contact_public_key_hex')) {
+      context.handle(
+          _contactPublicKeyHexMeta,
+          contactPublicKeyHex.isAcceptableOrUnknown(
+              data['contact_public_key_hex']!, _contactPublicKeyHexMeta));
+    } else if (isInserting) {
+      context.missing(_contactPublicKeyHexMeta);
+    }
+    if (data.containsKey('outgoing')) {
+      context.handle(_outgoingMeta,
+          outgoing.isAcceptableOrUnknown(data['outgoing']!, _outgoingMeta));
+    } else if (isInserting) {
+      context.missing(_outgoingMeta);
+    }
+    if (data.containsKey('kind')) {
+      context.handle(
+          _kindMeta, kind.isAcceptableOrUnknown(data['kind']!, _kindMeta));
+    } else if (isInserting) {
+      context.missing(_kindMeta);
+    }
+    if (data.containsKey('timestamp')) {
+      context.handle(_timestampMeta,
+          timestamp.isAcceptableOrUnknown(data['timestamp']!, _timestampMeta));
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  CallLog map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return CallLog(
+      id: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}id'])!,
+      contactPublicKeyHex: attachedDatabase.typeMapping.read(
+          DriftSqlType.string,
+          data['${effectivePrefix}contact_public_key_hex'])!,
+      outgoing: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}outgoing'])!,
+      kind: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}kind'])!,
+      timestamp: attachedDatabase.typeMapping
+          .read(DriftSqlType.dateTime, data['${effectivePrefix}timestamp'])!,
+    );
+  }
+
+  @override
+  $CallLogsTable createAlias(String alias) {
+    return $CallLogsTable(attachedDatabase, alias);
+  }
+}
+
+class CallLog extends DataClass implements Insertable<CallLog> {
+  final int id;
+  final String contactPublicKeyHex;
+
+  /// `true` se fomos nós que ligamos, `false` se foi o contato.
+  final bool outgoing;
+
+  /// 'started' ou 'ended' — guardado como texto simples em vez de enum do
+  /// Drift pra não precisar migrar se um terceiro tipo aparecer depois.
+  final String kind;
+  final DateTime timestamp;
+  const CallLog(
+      {required this.id,
+      required this.contactPublicKeyHex,
+      required this.outgoing,
+      required this.kind,
+      required this.timestamp});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['contact_public_key_hex'] = Variable<String>(contactPublicKeyHex);
+    map['outgoing'] = Variable<bool>(outgoing);
+    map['kind'] = Variable<String>(kind);
+    map['timestamp'] = Variable<DateTime>(timestamp);
+    return map;
+  }
+
+  CallLogsCompanion toCompanion(bool nullToAbsent) {
+    return CallLogsCompanion(
+      id: Value(id),
+      contactPublicKeyHex: Value(contactPublicKeyHex),
+      outgoing: Value(outgoing),
+      kind: Value(kind),
+      timestamp: Value(timestamp),
+    );
+  }
+
+  factory CallLog.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return CallLog(
+      id: serializer.fromJson<int>(json['id']),
+      contactPublicKeyHex:
+          serializer.fromJson<String>(json['contactPublicKeyHex']),
+      outgoing: serializer.fromJson<bool>(json['outgoing']),
+      kind: serializer.fromJson<String>(json['kind']),
+      timestamp: serializer.fromJson<DateTime>(json['timestamp']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'contactPublicKeyHex': serializer.toJson<String>(contactPublicKeyHex),
+      'outgoing': serializer.toJson<bool>(outgoing),
+      'kind': serializer.toJson<String>(kind),
+      'timestamp': serializer.toJson<DateTime>(timestamp),
+    };
+  }
+
+  CallLog copyWith(
+          {int? id,
+          String? contactPublicKeyHex,
+          bool? outgoing,
+          String? kind,
+          DateTime? timestamp}) =>
+      CallLog(
+        id: id ?? this.id,
+        contactPublicKeyHex: contactPublicKeyHex ?? this.contactPublicKeyHex,
+        outgoing: outgoing ?? this.outgoing,
+        kind: kind ?? this.kind,
+        timestamp: timestamp ?? this.timestamp,
+      );
+  CallLog copyWithCompanion(CallLogsCompanion data) {
+    return CallLog(
+      id: data.id.present ? data.id.value : this.id,
+      contactPublicKeyHex: data.contactPublicKeyHex.present
+          ? data.contactPublicKeyHex.value
+          : this.contactPublicKeyHex,
+      outgoing: data.outgoing.present ? data.outgoing.value : this.outgoing,
+      kind: data.kind.present ? data.kind.value : this.kind,
+      timestamp: data.timestamp.present ? data.timestamp.value : this.timestamp,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('CallLog(')
+          ..write('id: $id, ')
+          ..write('contactPublicKeyHex: $contactPublicKeyHex, ')
+          ..write('outgoing: $outgoing, ')
+          ..write('kind: $kind, ')
+          ..write('timestamp: $timestamp')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(id, contactPublicKeyHex, outgoing, kind, timestamp);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is CallLog &&
+          other.id == this.id &&
+          other.contactPublicKeyHex == this.contactPublicKeyHex &&
+          other.outgoing == this.outgoing &&
+          other.kind == this.kind &&
+          other.timestamp == this.timestamp);
+}
+
+class CallLogsCompanion extends UpdateCompanion<CallLog> {
+  final Value<int> id;
+  final Value<String> contactPublicKeyHex;
+  final Value<bool> outgoing;
+  final Value<String> kind;
+  final Value<DateTime> timestamp;
+  const CallLogsCompanion({
+    this.id = const Value.absent(),
+    this.contactPublicKeyHex = const Value.absent(),
+    this.outgoing = const Value.absent(),
+    this.kind = const Value.absent(),
+    this.timestamp = const Value.absent(),
+  });
+  CallLogsCompanion.insert({
+    this.id = const Value.absent(),
+    required String contactPublicKeyHex,
+    required bool outgoing,
+    required String kind,
+    this.timestamp = const Value.absent(),
+  })  : contactPublicKeyHex = Value(contactPublicKeyHex),
+        outgoing = Value(outgoing),
+        kind = Value(kind);
+  static Insertable<CallLog> custom({
+    Expression<int>? id,
+    Expression<String>? contactPublicKeyHex,
+    Expression<bool>? outgoing,
+    Expression<String>? kind,
+    Expression<DateTime>? timestamp,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (contactPublicKeyHex != null)
+        'contact_public_key_hex': contactPublicKeyHex,
+      if (outgoing != null) 'outgoing': outgoing,
+      if (kind != null) 'kind': kind,
+      if (timestamp != null) 'timestamp': timestamp,
+    });
+  }
+
+  CallLogsCompanion copyWith(
+      {Value<int>? id,
+      Value<String>? contactPublicKeyHex,
+      Value<bool>? outgoing,
+      Value<String>? kind,
+      Value<DateTime>? timestamp}) {
+    return CallLogsCompanion(
+      id: id ?? this.id,
+      contactPublicKeyHex: contactPublicKeyHex ?? this.contactPublicKeyHex,
+      outgoing: outgoing ?? this.outgoing,
+      kind: kind ?? this.kind,
+      timestamp: timestamp ?? this.timestamp,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (contactPublicKeyHex.present) {
+      map['contact_public_key_hex'] =
+          Variable<String>(contactPublicKeyHex.value);
+    }
+    if (outgoing.present) {
+      map['outgoing'] = Variable<bool>(outgoing.value);
+    }
+    if (kind.present) {
+      map['kind'] = Variable<String>(kind.value);
+    }
+    if (timestamp.present) {
+      map['timestamp'] = Variable<DateTime>(timestamp.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('CallLogsCompanion(')
+          ..write('id: $id, ')
+          ..write('contactPublicKeyHex: $contactPublicKeyHex, ')
+          ..write('outgoing: $outgoing, ')
+          ..write('kind: $kind, ')
+          ..write('timestamp: $timestamp')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -2402,6 +2715,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $GroupMembersTable groupMembers = $GroupMembersTable(this);
   late final $GroupInvitedContactsTable groupInvitedContacts =
       $GroupInvitedContactsTable(this);
+  late final $CallLogsTable callLogs = $CallLogsTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -2413,7 +2727,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         groups,
         groupMessages,
         groupMembers,
-        groupInvitedContacts
+        groupInvitedContacts,
+        callLogs
       ];
 }
 
@@ -3687,6 +4002,171 @@ typedef $$GroupInvitedContactsTableProcessedTableManager
         ),
         GroupInvitedContact,
         PrefetchHooks Function()>;
+typedef $$CallLogsTableCreateCompanionBuilder = CallLogsCompanion Function({
+  Value<int> id,
+  required String contactPublicKeyHex,
+  required bool outgoing,
+  required String kind,
+  Value<DateTime> timestamp,
+});
+typedef $$CallLogsTableUpdateCompanionBuilder = CallLogsCompanion Function({
+  Value<int> id,
+  Value<String> contactPublicKeyHex,
+  Value<bool> outgoing,
+  Value<String> kind,
+  Value<DateTime> timestamp,
+});
+
+class $$CallLogsTableFilterComposer
+    extends Composer<_$AppDatabase, $CallLogsTable> {
+  $$CallLogsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get contactPublicKeyHex => $composableBuilder(
+      column: $table.contactPublicKeyHex,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get outgoing => $composableBuilder(
+      column: $table.outgoing, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get kind => $composableBuilder(
+      column: $table.kind, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get timestamp => $composableBuilder(
+      column: $table.timestamp, builder: (column) => ColumnFilters(column));
+}
+
+class $$CallLogsTableOrderingComposer
+    extends Composer<_$AppDatabase, $CallLogsTable> {
+  $$CallLogsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get contactPublicKeyHex => $composableBuilder(
+      column: $table.contactPublicKeyHex,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get outgoing => $composableBuilder(
+      column: $table.outgoing, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get kind => $composableBuilder(
+      column: $table.kind, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get timestamp => $composableBuilder(
+      column: $table.timestamp, builder: (column) => ColumnOrderings(column));
+}
+
+class $$CallLogsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $CallLogsTable> {
+  $$CallLogsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get contactPublicKeyHex => $composableBuilder(
+      column: $table.contactPublicKeyHex, builder: (column) => column);
+
+  GeneratedColumn<bool> get outgoing =>
+      $composableBuilder(column: $table.outgoing, builder: (column) => column);
+
+  GeneratedColumn<String> get kind =>
+      $composableBuilder(column: $table.kind, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get timestamp =>
+      $composableBuilder(column: $table.timestamp, builder: (column) => column);
+}
+
+class $$CallLogsTableTableManager extends RootTableManager<
+    _$AppDatabase,
+    $CallLogsTable,
+    CallLog,
+    $$CallLogsTableFilterComposer,
+    $$CallLogsTableOrderingComposer,
+    $$CallLogsTableAnnotationComposer,
+    $$CallLogsTableCreateCompanionBuilder,
+    $$CallLogsTableUpdateCompanionBuilder,
+    (CallLog, BaseReferences<_$AppDatabase, $CallLogsTable, CallLog>),
+    CallLog,
+    PrefetchHooks Function()> {
+  $$CallLogsTableTableManager(_$AppDatabase db, $CallLogsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$CallLogsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$CallLogsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$CallLogsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<int> id = const Value.absent(),
+            Value<String> contactPublicKeyHex = const Value.absent(),
+            Value<bool> outgoing = const Value.absent(),
+            Value<String> kind = const Value.absent(),
+            Value<DateTime> timestamp = const Value.absent(),
+          }) =>
+              CallLogsCompanion(
+            id: id,
+            contactPublicKeyHex: contactPublicKeyHex,
+            outgoing: outgoing,
+            kind: kind,
+            timestamp: timestamp,
+          ),
+          createCompanionCallback: ({
+            Value<int> id = const Value.absent(),
+            required String contactPublicKeyHex,
+            required bool outgoing,
+            required String kind,
+            Value<DateTime> timestamp = const Value.absent(),
+          }) =>
+              CallLogsCompanion.insert(
+            id: id,
+            contactPublicKeyHex: contactPublicKeyHex,
+            outgoing: outgoing,
+            kind: kind,
+            timestamp: timestamp,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (
+                    e.readTable<$CallLogsTable, CallLog>(table),
+                    BaseReferences<_$AppDatabase, $CallLogsTable, CallLog>(
+                        db, table, e)
+                  ))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$CallLogsTableProcessedTableManager = ProcessedTableManager<
+    _$AppDatabase,
+    $CallLogsTable,
+    CallLog,
+    $$CallLogsTableFilterComposer,
+    $$CallLogsTableOrderingComposer,
+    $$CallLogsTableAnnotationComposer,
+    $$CallLogsTableCreateCompanionBuilder,
+    $$CallLogsTableUpdateCompanionBuilder,
+    (CallLog, BaseReferences<_$AppDatabase, $CallLogsTable, CallLog>),
+    CallLog,
+    PrefetchHooks Function()>;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -3705,4 +4185,6 @@ class $AppDatabaseManager {
       $$GroupMembersTableTableManager(_db, _db.groupMembers);
   $$GroupInvitedContactsTableTableManager get groupInvitedContacts =>
       $$GroupInvitedContactsTableTableManager(_db, _db.groupInvitedContacts);
+  $$CallLogsTableTableManager get callLogs =>
+      $$CallLogsTableTableManager(_db, _db.callLogs);
 }

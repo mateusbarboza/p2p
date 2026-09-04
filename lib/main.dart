@@ -31,6 +31,7 @@ import 'identity_backup.dart';
 import 'local_auth_screen.dart';
 import 'onboarding_screen.dart';
 import 'profile_screen.dart';
+import 'providers/call_provider.dart';
 import 'providers/contacts_provider.dart';
 import 'providers/database_provider.dart';
 import 'providers/file_transfers_provider.dart';
@@ -230,6 +231,9 @@ class _AccountSessionRootState extends ConsumerState<_AccountSessionRoot> {
     // Notificação nativa ao chegar mensagem — mesmo raciocínio de sempre:
     // precisa estar ouvindo desde já, não só quando o chat estiver aberto.
     ref.read(notificationsProvider);
+    // Uma chamada pode chegar (ToxCallIncomingEvent) com qualquer tela
+    // aberta, ou nenhuma — mesmo raciocínio de sempre.
+    ref.read(callProvider);
     setState(() {});
   }
 
@@ -293,6 +297,8 @@ class _AccountSessionRootState extends ConsumerState<_AccountSessionRoot> {
     ref.invalidate(groupMessagesRepositoryProvider);
     ref.invalidate(groupMembersRepositoryProvider);
     ref.invalidate(groupInvitedContactsRepositoryProvider);
+    ref.invalidate(callLogsRepositoryProvider);
+    ref.invalidate(callProvider);
     ref.invalidate(contactsProvider);
     ref.invalidate(messagesSyncProvider);
     ref.invalidate(fileTransfersSyncProvider);
@@ -362,6 +368,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   bool _showTalksnapId = false;
   bool _showAddContactForm = false;
   bool _showContactSearch = false;
+
+  /// `true` enquanto o diálogo de "chamada recebida" está na tela — usado
+  /// só pra fechá-lo sozinho se a chamada for encerrada por outro motivo
+  /// (ex: quem ligou desistiu antes de atendermos).
+  bool _incomingCallDialogShown = false;
 
   void _submitAddFriend() {
     final talksnapId = _talksnapIdController.text.trim().toUpperCase();
@@ -501,22 +512,55 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       });
     });
 
-    final selfStatus = ref.watch(selfStatusProvider);
-    final selfProfile = ref.watch(selfProfileProvider);
-    final pendingRequests = ref.watch(pendingRequestsProvider);
-    final contacts = ref.watch(contactsProvider);
-    final groups = ref.watch(groupsProvider);
-    final pendingGroupInvites = ref.watch(pendingGroupInvitesProvider);
-    final bool isOnline = selfStatus.connection != ToxConnection.none;
+    // Uma chamada recebida pode chegar com qualquer tela aberta —
+    // HomeScreen fica montada o tempo todo enquanto logado, então é o
+    // lugar certo pra pegar isso e mostrar o diálogo de atender/recusar.
+    ref.listen(callProvider, (previous, next) {
+      if (previous?.status != CallStatus.incomingRinging &&
+          next.status == CallStatus.incomingRinging) {
+        final publicKeyHex = next.contactPublicKeyHex;
+        final callerName = ref
+            .read(contactsProvider)
+            .where((c) => c.publicKeyHex == publicKeyHex)
+            .map((c) => c.displayName)
+            .firstOrNull;
+        _incomingCallDialogShown = true;
+        showDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlertDialog(
+            title: Text('Chamada de ${callerName ?? 'contato desconhecido'}'),
+            content: const Text('Chamada de voz recebida.'),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  ref.read(callProvider.notifier).hangUp();
+                  Navigator.pop(context);
+                },
+                child: const Text('Recusar'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  ref.read(callProvider.notifier).answer();
+                  Navigator.pop(context);
+                },
+                child: const Text('Atender'),
+              ),
+            ],
+          ),
+        ).then((_) => _incomingCallDialogShown = false);
+      } else if (previous?.status == CallStatus.incomingRinging &&
+          next.status != CallStatus.incomingRinging &&
+          _incomingCallDialogShown) {
+        // Quem ligou desistiu (ou a chamada falhou) antes de respondermos
+        // — fecha o diálogo sozinho em vez de deixá-lo preso na tela.
+        _incomingCallDialogShown = false;
+        Navigator.of(context).pop();
+      }
+    });
 
-    final query = _contactSearchQuery.trim().toLowerCase();
-    final filteredContacts = query.isEmpty
-        ? contacts
-        : contacts
-            .where((contact) =>
-                contact.displayName.toLowerCase().contains(query) ||
-                contact.publicKeyHex.toLowerCase().contains(query))
-            .toList();
+    final callState = ref.watch(callProvider);
+    final contacts = ref.watch(contactsProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -539,307 +583,376 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
         ],
       ),
-      body: Row(
+      body: Column(
         children: [
-          SizedBox(
-            width: 340,
-            child: ListView(
-              padding: const EdgeInsets.all(24),
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    CircleAvatar(
-                      radius: 32,
-                      backgroundImage: selfProfile.avatarPath != null
-                          ? FileImage(File(selfProfile.avatarPath!))
-                          : null,
-                      child: selfProfile.avatarPath == null
-                          ? const Icon(Icons.person, size: 32)
-                          : null,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            selfProfile.name.isNotEmpty
-                                ? selfProfile.name
-                                : 'Sem nome',
-                            style: Theme.of(context).textTheme.titleLarge,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          if (selfProfile.statusMessage.isNotEmpty)
-                            Text(
-                              selfProfile.statusMessage,
-                              style: Theme.of(context).textTheme.bodySmall,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    PopupMenuButton<int>(
-                      tooltip: 'Mudar status',
-                      onSelected: (status) => ref
-                          .read(selfProfileProvider.notifier)
-                          .updateUserStatus(status),
-                      itemBuilder: (context) => const [
-                        PopupMenuItem(
-                            value: kToxUserStatusNone, child: Text('Online')),
-                        PopupMenuItem(
-                            value: kToxUserStatusAway, child: Text('Ausente')),
-                        PopupMenuItem(
-                            value: kToxUserStatusBusy, child: Text('Ocupado')),
-                      ],
-                      child: _StatusBadge(
-                        color: !isOnline
-                            ? Colors.orange
-                            : userStatusColor(selfProfile.userStatus),
-                        label: !isOnline
-                            ? _connectionLabel(selfStatus.connection)
-                            : userStatusLabel(selfProfile.userStatus),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 20),
-                Row(
-                  children: [
-                    OutlinedButton.icon(
-                      onPressed: () =>
-                          setState(() => _showTalksnapId = !_showTalksnapId),
-                      icon: Icon(
-                        _showTalksnapId
-                            ? Icons.visibility_off
-                            : Icons.visibility,
-                        size: 18,
-                      ),
-                      label: const Text('Meu ID'),
-                    ),
-                    const SizedBox(width: 8),
-                    OutlinedButton.icon(
-                      onPressed: () => setState(
-                          () => _showAddContactForm = !_showAddContactForm),
-                      icon: const Icon(Icons.person_add, size: 18),
-                      label: const Text('Adicionar'),
-                    ),
-                  ],
-                ),
-                if (_showTalksnapId) ...[
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: SelectableText(
-                          selfStatus.talksnapId ?? 'Gerando identidade P2P...',
-                          style: const TextStyle(
-                              fontFamily: 'monospace', fontSize: 12),
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.copy, size: 18),
-                        tooltip: 'Copiar ID',
-                        onPressed: selfStatus.talksnapId == null
-                            ? null
-                            : () => _copyTalksnapId(selfStatus.talksnapId!),
-                      ),
-                    ],
-                  ),
-                ],
-                if (_showAddContactForm) ...[
-                  const Divider(height: 32),
-                  Text('Adicionar contato',
-                      style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _talksnapIdController,
-                    decoration: const InputDecoration(
-                      labelText: 'Talksnap ID do contato',
-                      border: OutlineInputBorder(),
-                    ),
-                    style:
-                        const TextStyle(fontFamily: 'monospace', fontSize: 12),
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _greetingController,
-                    decoration: const InputDecoration(
-                      labelText: 'Mensagem de apresentação',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  FilledButton.icon(
-                    onPressed: _sendingFriendRequest ? null : _submitAddFriend,
-                    icon: const Icon(Icons.person_add),
-                    label: Text(_sendingFriendRequest
-                        ? 'Enviando...'
-                        : 'Enviar pedido de amizade'),
-                  ),
-                ],
-                if (pendingRequests.isNotEmpty) ...[
-                  const Divider(height: 40),
-                  Text('Pedidos recebidos',
-                      style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 8),
-                  for (final request in pendingRequests)
-                    Card(
-                      child: ListTile(
-                        title: Text(
-                          request.publicKeyHex,
-                          style: const TextStyle(
-                              fontFamily: 'monospace', fontSize: 11),
-                        ),
-                        subtitle: Text(request.message),
-                        trailing: FilledButton(
-                          onPressed: () => _acceptRequest(request),
-                          child: const Text('Aceitar'),
-                        ),
-                      ),
-                    ),
-                ],
-                const Divider(height: 40),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text('Contatos (${contacts.length})',
-                          style: Theme.of(context).textTheme.titleMedium),
-                    ),
-                    if (contacts.isNotEmpty)
-                      IconButton(
-                        icon: Icon(
-                          _showContactSearch ? Icons.search_off : Icons.search,
-                          size: 20,
-                        ),
-                        tooltip: 'Buscar contato',
-                        onPressed: () => setState(() {
-                          _showContactSearch = !_showContactSearch;
-                          if (!_showContactSearch) {
-                            _contactSearchController.clear();
-                            _contactSearchQuery = '';
-                          }
-                        }),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                if (_showContactSearch && contacts.isNotEmpty) ...[
-                  TextField(
-                    controller: _contactSearchController,
-                    autofocus: true,
-                    decoration: InputDecoration(
-                      hintText: 'Buscar contato',
-                      prefixIcon: const Icon(Icons.search, size: 20),
-                      isDense: true,
-                      border: const OutlineInputBorder(),
-                      suffixIcon: _contactSearchQuery.isEmpty
-                          ? null
-                          : IconButton(
-                              icon: const Icon(Icons.clear, size: 18),
-                              onPressed: () {
-                                _contactSearchController.clear();
-                                setState(() => _contactSearchQuery = '');
-                              },
-                            ),
-                    ),
-                    onChanged: (value) =>
-                        setState(() => _contactSearchQuery = value),
-                  ),
-                  const SizedBox(height: 8),
-                ],
-                if (contacts.isEmpty)
-                  const Text('Nenhum contato ainda.')
-                else if (filteredContacts.isEmpty)
-                  const Text('Nenhum contato encontrado.')
-                else
-                  for (final contact in filteredContacts)
-                    _ContactTile(
-                      contact: contact,
-                      connectionLabel: contact.connection != ToxConnection.none
-                          ? userStatusLabel(contact.userStatus)
-                          : _connectionLabel(contact.connection),
-                      selected: _selectedContact?.publicKeyHex ==
-                          contact.publicKeyHex,
-                      onTap: () => _openChat(contact),
-                      onRemove: () => _confirmRemoveContact(contact),
-                    ),
-                if (pendingGroupInvites.isNotEmpty) ...[
-                  const Divider(height: 40),
-                  Text('Convites de grupo',
-                      style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 8),
-                  for (final invite in pendingGroupInvites)
-                    Card(
-                      child: ListTile(
-                        title: Text(invite.groupName),
-                        subtitle: const Text('Convite de um contato'),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            TextButton(
-                              onPressed: () => _rejectGroupInvite(invite),
-                              child: const Text('Recusar'),
-                            ),
-                            FilledButton(
-                              onPressed: () => _acceptGroupInvite(invite),
-                              child: const Text('Aceitar'),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                ],
-                const Divider(height: 40),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text('Grupos (${groups.length})',
-                          style: Theme.of(context).textTheme.titleMedium),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.group_add_outlined, size: 20),
-                      tooltip: 'Criar grupo',
-                      onPressed: _createGroup,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                if (groups.isEmpty)
-                  const Text('Nenhum grupo ainda.')
-                else
-                  for (final group in groups)
-                    _GroupTile(
-                      group: group,
-                      selected: _selectedGroup?.chatIdHex == group.chatIdHex,
-                      onTap: () => _openGroupChat(group),
-                      onLeave: () => _confirmLeaveGroup(group),
-                    ),
-              ],
-            ),
-          ),
-          const VerticalDivider(width: 1),
+          if (callState.status != CallStatus.idle)
+            _buildGlobalCallBar(callState, contacts),
           Expanded(
-            child: _selectedGroup != null
-                ? GroupChatScreen(
-                    key: ValueKey(_selectedGroup!.chatIdHex),
-                    chatIdHex: _selectedGroup!.chatIdHex,
-                    groupName: _selectedGroup!.name,
-                    contacts: contacts,
-                  )
-                : _selectedContact == null
-                    ? const Center(
-                        child: Text('Selecione um contato para conversar'))
-                    : ChatScreen(
-                        key: ValueKey(_selectedContact!.publicKeyHex),
-                        contactPublicKeyHex: _selectedContact!.publicKeyHex,
-                        contactLabel: _selectedContact!.displayName,
-                      ),
+            child: _buildMainRowChildren(),
           ),
         ],
       ),
+    );
+  }
+
+  /// Barra de chamada visível em QUALQUER tela (não só na conversa do
+  /// contato) — sem isso, quem atende só teria acesso ao botão de mudo se
+  /// tivesse aberto a conversa específica com quem ligou.
+  Widget _buildGlobalCallBar(
+      CallState callState, List<ContactViewModel> contacts) {
+    final contactName = contacts
+            .where((c) => c.publicKeyHex == callState.contactPublicKeyHex)
+            .map((c) => c.displayName)
+            .firstOrNull ??
+        'contato';
+    final label = switch (callState.status) {
+      CallStatus.outgoingRinging => 'Chamando $contactName...',
+      CallStatus.incomingRinging => 'Chamada de $contactName...',
+      CallStatus.active => 'Em chamada com $contactName',
+      CallStatus.idle => '',
+    };
+    return Material(
+      color: Theme.of(context).colorScheme.primaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Row(
+          children: [
+            const Icon(Icons.call, size: 18),
+            const SizedBox(width: 8),
+            Expanded(child: Text(label)),
+            if (callState.status != CallStatus.idle)
+              IconButton(
+                icon: Icon(callState.muted ? Icons.mic_off : Icons.mic),
+                tooltip: callState.muted ? 'Reativar microfone' : 'Silenciar',
+                onPressed: () => ref.read(callProvider.notifier).toggleMute(),
+              ),
+            IconButton(
+              icon: const Icon(Icons.call_end),
+              color: Colors.red,
+              tooltip: 'Desligar',
+              onPressed: () => ref.read(callProvider.notifier).hangUp(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMainRowChildren() {
+    final selfProfile = ref.watch(selfProfileProvider);
+    final selfStatus = ref.watch(selfStatusProvider);
+    final pendingRequests = ref.watch(pendingRequestsProvider);
+    final contacts = ref.watch(contactsProvider);
+    final groups = ref.watch(groupsProvider);
+    final pendingGroupInvites = ref.watch(pendingGroupInvitesProvider);
+    final bool isOnline = selfStatus.connection != ToxConnection.none;
+
+    final query = _contactSearchQuery.trim().toLowerCase();
+    final filteredContacts = query.isEmpty
+        ? contacts
+        : contacts
+            .where((contact) =>
+                contact.displayName.toLowerCase().contains(query) ||
+                contact.publicKeyHex.toLowerCase().contains(query))
+            .toList();
+
+    return Row(
+      children: [
+        SizedBox(
+          width: 340,
+          child: ListView(
+            padding: const EdgeInsets.all(24),
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  CircleAvatar(
+                    radius: 32,
+                    backgroundImage: selfProfile.avatarPath != null
+                        ? FileImage(File(selfProfile.avatarPath!))
+                        : null,
+                    child: selfProfile.avatarPath == null
+                        ? const Icon(Icons.person, size: 32)
+                        : null,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          selfProfile.name.isNotEmpty
+                              ? selfProfile.name
+                              : 'Sem nome',
+                          style: Theme.of(context).textTheme.titleLarge,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        if (selfProfile.statusMessage.isNotEmpty)
+                          Text(
+                            selfProfile.statusMessage,
+                            style: Theme.of(context).textTheme.bodySmall,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  PopupMenuButton<int>(
+                    tooltip: 'Mudar status',
+                    onSelected: (status) => ref
+                        .read(selfProfileProvider.notifier)
+                        .updateUserStatus(status),
+                    itemBuilder: (context) => const [
+                      PopupMenuItem(
+                          value: kToxUserStatusNone, child: Text('Online')),
+                      PopupMenuItem(
+                          value: kToxUserStatusAway, child: Text('Ausente')),
+                      PopupMenuItem(
+                          value: kToxUserStatusBusy, child: Text('Ocupado')),
+                    ],
+                    child: _StatusBadge(
+                      color: !isOnline
+                          ? Colors.orange
+                          : userStatusColor(selfProfile.userStatus),
+                      label: !isOnline
+                          ? _connectionLabel(selfStatus.connection)
+                          : userStatusLabel(selfProfile.userStatus),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () =>
+                        setState(() => _showTalksnapId = !_showTalksnapId),
+                    icon: Icon(
+                      _showTalksnapId ? Icons.visibility_off : Icons.visibility,
+                      size: 18,
+                    ),
+                    label: const Text('Meu ID'),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: () => setState(
+                        () => _showAddContactForm = !_showAddContactForm),
+                    icon: const Icon(Icons.person_add, size: 18),
+                    label: const Text('Adicionar'),
+                  ),
+                ],
+              ),
+              if (_showTalksnapId) ...[
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: SelectableText(
+                        selfStatus.talksnapId ?? 'Gerando identidade P2P...',
+                        style: const TextStyle(
+                            fontFamily: 'monospace', fontSize: 12),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.copy, size: 18),
+                      tooltip: 'Copiar ID',
+                      onPressed: selfStatus.talksnapId == null
+                          ? null
+                          : () => _copyTalksnapId(selfStatus.talksnapId!),
+                    ),
+                  ],
+                ),
+              ],
+              if (_showAddContactForm) ...[
+                const Divider(height: 32),
+                Text('Adicionar contato',
+                    style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _talksnapIdController,
+                  decoration: const InputDecoration(
+                    labelText: 'Talksnap ID do contato',
+                    border: OutlineInputBorder(),
+                  ),
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _greetingController,
+                  decoration: const InputDecoration(
+                    labelText: 'Mensagem de apresentação',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                FilledButton.icon(
+                  onPressed: _sendingFriendRequest ? null : _submitAddFriend,
+                  icon: const Icon(Icons.person_add),
+                  label: Text(_sendingFriendRequest
+                      ? 'Enviando...'
+                      : 'Enviar pedido de amizade'),
+                ),
+              ],
+              if (pendingRequests.isNotEmpty) ...[
+                const Divider(height: 40),
+                Text('Pedidos recebidos',
+                    style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 8),
+                for (final request in pendingRequests)
+                  Card(
+                    child: ListTile(
+                      title: Text(
+                        request.publicKeyHex,
+                        style: const TextStyle(
+                            fontFamily: 'monospace', fontSize: 11),
+                      ),
+                      subtitle: Text(request.message),
+                      trailing: FilledButton(
+                        onPressed: () => _acceptRequest(request),
+                        child: const Text('Aceitar'),
+                      ),
+                    ),
+                  ),
+              ],
+              const Divider(height: 40),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text('Contatos (${contacts.length})',
+                        style: Theme.of(context).textTheme.titleMedium),
+                  ),
+                  if (contacts.isNotEmpty)
+                    IconButton(
+                      icon: Icon(
+                        _showContactSearch ? Icons.search_off : Icons.search,
+                        size: 20,
+                      ),
+                      tooltip: 'Buscar contato',
+                      onPressed: () => setState(() {
+                        _showContactSearch = !_showContactSearch;
+                        if (!_showContactSearch) {
+                          _contactSearchController.clear();
+                          _contactSearchQuery = '';
+                        }
+                      }),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (_showContactSearch && contacts.isNotEmpty) ...[
+                TextField(
+                  controller: _contactSearchController,
+                  autofocus: true,
+                  decoration: InputDecoration(
+                    hintText: 'Buscar contato',
+                    prefixIcon: const Icon(Icons.search, size: 20),
+                    isDense: true,
+                    border: const OutlineInputBorder(),
+                    suffixIcon: _contactSearchQuery.isEmpty
+                        ? null
+                        : IconButton(
+                            icon: const Icon(Icons.clear, size: 18),
+                            onPressed: () {
+                              _contactSearchController.clear();
+                              setState(() => _contactSearchQuery = '');
+                            },
+                          ),
+                  ),
+                  onChanged: (value) =>
+                      setState(() => _contactSearchQuery = value),
+                ),
+                const SizedBox(height: 8),
+              ],
+              if (contacts.isEmpty)
+                const Text('Nenhum contato ainda.')
+              else if (filteredContacts.isEmpty)
+                const Text('Nenhum contato encontrado.')
+              else
+                for (final contact in filteredContacts)
+                  _ContactTile(
+                    contact: contact,
+                    connectionLabel: contact.connection != ToxConnection.none
+                        ? userStatusLabel(contact.userStatus)
+                        : _connectionLabel(contact.connection),
+                    selected:
+                        _selectedContact?.publicKeyHex == contact.publicKeyHex,
+                    onTap: () => _openChat(contact),
+                    onRemove: () => _confirmRemoveContact(contact),
+                  ),
+              if (pendingGroupInvites.isNotEmpty) ...[
+                const Divider(height: 40),
+                Text('Convites de grupo',
+                    style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 8),
+                for (final invite in pendingGroupInvites)
+                  Card(
+                    child: ListTile(
+                      title: Text(invite.groupName),
+                      subtitle: const Text('Convite de um contato'),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          TextButton(
+                            onPressed: () => _rejectGroupInvite(invite),
+                            child: const Text('Recusar'),
+                          ),
+                          FilledButton(
+                            onPressed: () => _acceptGroupInvite(invite),
+                            child: const Text('Aceitar'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+              const Divider(height: 40),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text('Grupos (${groups.length})',
+                        style: Theme.of(context).textTheme.titleMedium),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.group_add_outlined, size: 20),
+                    tooltip: 'Criar grupo',
+                    onPressed: _createGroup,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (groups.isEmpty)
+                const Text('Nenhum grupo ainda.')
+              else
+                for (final group in groups)
+                  _GroupTile(
+                    group: group,
+                    selected: _selectedGroup?.chatIdHex == group.chatIdHex,
+                    onTap: () => _openGroupChat(group),
+                    onLeave: () => _confirmLeaveGroup(group),
+                  ),
+            ],
+          ),
+        ),
+        const VerticalDivider(width: 1),
+        Expanded(
+          child: _selectedGroup != null
+              ? GroupChatScreen(
+                  key: ValueKey(_selectedGroup!.chatIdHex),
+                  chatIdHex: _selectedGroup!.chatIdHex,
+                  groupName: _selectedGroup!.name,
+                  contacts: contacts,
+                )
+              : _selectedContact == null
+                  ? const Center(
+                      child: Text('Selecione um contato para conversar'))
+                  : ChatScreen(
+                      key: ValueKey(_selectedContact!.publicKeyHex),
+                      contactPublicKeyHex: _selectedContact!.publicKeyHex,
+                      contactLabel: _selectedContact!.displayName,
+                    ),
+        ),
+      ],
     );
   }
 
@@ -954,6 +1067,9 @@ class _ContactTileState extends ConsumerState<_ContactTile> {
     final contact = widget.contact;
     final unreadCount =
         ref.watch(unreadMessagesCountProvider(contact.publicKeyHex)).value ?? 0;
+    final callState = ref.watch(callProvider);
+    final inCallWithContact = callState.status != CallStatus.idle &&
+        callState.contactPublicKeyHex == contact.publicKeyHex;
     return MouseRegion(
       onEnter: (_) => setState(() => _hovering = true),
       onExit: (_) => setState(() => _hovering = false),
@@ -987,11 +1103,17 @@ class _ContactTileState extends ConsumerState<_ContactTile> {
               ],
             ],
           ),
-          subtitle: Text(
-            contact.statusMessage?.isNotEmpty == true
-                ? '${widget.connectionLabel} · ${contact.statusMessage}'
-                : widget.connectionLabel,
-          ),
+          subtitle: inCallWithContact
+              ? const Text('Em chamada',
+                  style: TextStyle(
+                      color: Colors.green, fontWeight: FontWeight.bold))
+              : contact.isTyping
+                  ? const Text('Digitando...',
+                      style: TextStyle(
+                          color: Colors.green, fontWeight: FontWeight.bold))
+                  : contact.statusMessage?.isNotEmpty == true
+                      ? Text(contact.statusMessage!)
+                      : null,
           trailing: SizedBox(
             width: 28,
             height: 28,

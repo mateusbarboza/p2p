@@ -372,6 +372,38 @@ typedef _ToxCallbackFriendConnectionStatusDart = void Function(
 /// equivalente ao `/me` do IRC, fica para uma fase futura de UI).
 const int kToxMessageTypeNormal = 0;
 
+// typedef void tox_friend_typing_cb(Tox *tox, uint32_t friend_number, bool typing, void *user_data);
+typedef ToxFriendTypingCallbackNative = ffi.Void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Uint32 friendNumber,
+  ffi.Uint8 typing,
+  ffi.Pointer<ffi.Void> userData,
+);
+
+// void tox_callback_friend_typing(Tox *tox, tox_friend_typing_cb *callback);
+typedef _ToxCallbackFriendTypingNative = ffi.Void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Pointer<ffi.NativeFunction<ToxFriendTypingCallbackNative>> callback,
+);
+typedef _ToxCallbackFriendTypingDart = void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Pointer<ffi.NativeFunction<ToxFriendTypingCallbackNative>> callback,
+);
+
+// bool tox_self_set_typing(Tox *tox, uint32_t friend_number, bool typing, Tox_Err_Set_Typing *error);
+typedef _ToxSelfSetTypingNative = ffi.Uint8 Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Uint32 friendNumber,
+  ffi.Uint8 typing,
+  ffi.Pointer<ffi.Int32> error,
+);
+typedef _ToxSelfSetTypingDart = int Function(
+  ffi.Pointer<ffi.Void> tox,
+  int friendNumber,
+  int typing,
+  ffi.Pointer<ffi.Int32> error,
+);
+
 // Tox_Friend_Message_Id tox_friend_send_message(Tox *tox, uint32_t friend_number, Tox_Message_Type type, const uint8_t message[], size_t length, Tox_Err_Friend_Send_Message *error);
 typedef _ToxFriendSendMessageNative = ffi.Uint32 Function(
   ffi.Pointer<ffi.Void> tox,
@@ -1204,6 +1236,8 @@ class ToxCoreBindings {
   late final _ToxCallbackFriendConnectionStatusDart
       _toxCallbackFriendConnectionStatus;
   late final _ToxFriendSendMessageDart _toxFriendSendMessage;
+  late final _ToxCallbackFriendTypingDart _toxCallbackFriendTyping;
+  late final _ToxSelfSetTypingDart _toxSelfSetTyping;
   late final _ToxCallbackFriendMessageDart _toxCallbackFriendMessage;
   late final _ToxCallbackFriendReadReceiptDart _toxCallbackFriendReadReceipt;
   late final _ToxFileSendDart _toxFileSend;
@@ -1347,6 +1381,12 @@ class ToxCoreBindings {
         'tox_callback_friend_connection_status');
     _toxFriendSendMessage = _lib.lookupFunction<_ToxFriendSendMessageNative,
         _ToxFriendSendMessageDart>('tox_friend_send_message');
+    _toxCallbackFriendTyping = _lib.lookupFunction<
+        _ToxCallbackFriendTypingNative,
+        _ToxCallbackFriendTypingDart>('tox_callback_friend_typing');
+    _toxSelfSetTyping =
+        _lib.lookupFunction<_ToxSelfSetTypingNative, _ToxSelfSetTypingDart>(
+            'tox_self_set_typing');
     _toxCallbackFriendMessage = _lib.lookupFunction<
         _ToxCallbackFriendMessageNative,
         _ToxCallbackFriendMessageDart>('tox_callback_friend_message');
@@ -1710,6 +1750,27 @@ class ToxCoreBindings {
         callback,
   ) {
     _toxCallbackFriendConnectionStatus(tox, callback);
+  }
+
+  /// Registra o callback nativo chamado quando um amigo começa ou para de
+  /// digitar. Disparado de dentro de [toxIterate].
+  void setFriendTypingCallback(
+    ffi.Pointer<ffi.Void> tox,
+    ffi.Pointer<ffi.NativeFunction<ToxFriendTypingCallbackNative>> callback,
+  ) {
+    _toxCallbackFriendTyping(tox, callback);
+  }
+
+  /// Avisa um amigo que estamos (ou paramos de) digitar uma mensagem pra
+  /// ele. Erro silencioso (amigo não encontrado) não é crítico o bastante
+  /// pra lançar exceção — só ignora.
+  void setSelfTyping(ffi.Pointer<ffi.Void> tox, int friendNumber, bool typing) {
+    final errorPtr = pkg_ffi.calloc<ffi.Int32>();
+    try {
+      _toxSelfSetTyping(tox, friendNumber, typing ? 1 : 0, errorPtr);
+    } finally {
+      pkg_ffi.calloc.free(errorPtr);
+    }
   }
 
   /// Decodifica `length` bytes UTF-8 a partir de um ponteiro nativo (usado

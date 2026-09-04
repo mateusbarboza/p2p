@@ -64,6 +64,10 @@ class GroupMessagesSyncNotifier extends Notifier<void> {
       case ToxFriendProfileEvent():
       case ToxFriendRequestEvent():
       case ToxFriendConnectionEvent():
+      case ToxFriendTypingEvent():
+      case ToxCallIncomingEvent():
+      case ToxCallStateEvent():
+      case ToxCallAudioFrameEvent():
       case ToxFriendAddResultEvent():
       case ToxFriendRemovedEvent():
       case ToxFriendMessageEvent():

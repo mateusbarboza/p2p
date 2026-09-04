@@ -134,6 +134,22 @@ class GroupInvitedContacts extends Table {
       ];
 }
 
+/// Um evento de chamada de voz na timeline de um contato — não é uma
+/// mensagem de texto, é uma linha informativa tipo "Chamada de voz —
+/// 14:32" / "Chamada encerrada — 14:35" (ver [CallLogKind]).
+class CallLogs extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get contactPublicKeyHex => text()();
+
+  /// `true` se fomos nós que ligamos, `false` se foi o contato.
+  BoolColumn get outgoing => boolean()();
+
+  /// 'started' ou 'ended' — guardado como texto simples em vez de enum do
+  /// Drift pra não precisar migrar se um terceiro tipo aparecer depois.
+  TextColumn get kind => text()();
+  DateTimeColumn get timestamp => dateTime().withDefault(currentDateAndTime)();
+}
+
 @DriftDatabase(tables: [
   Contacts,
   Messages,
@@ -142,12 +158,13 @@ class GroupInvitedContacts extends Table {
   GroupMessages,
   GroupMembers,
   GroupInvitedContacts,
+  CallLogs,
 ])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
   @override
-  int get schemaVersion => 8;
+  int get schemaVersion => 9;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -174,6 +191,9 @@ class AppDatabase extends _$AppDatabase {
           }
           if (from < 8) {
             await m.addColumn(messages, messages.read);
+          }
+          if (from < 9) {
+            await m.createTable(callLogs);
           }
         },
       );

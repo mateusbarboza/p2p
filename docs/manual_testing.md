@@ -99,3 +99,29 @@ preciso criar/juntar-se ao grupo de novo. Se algum dia quiser revisitar,
 o próximo passo seria tentar atualizar o submódulo `toxcore` para uma
 versão mais nova e repetir esse mesmo teste de round-trip antes de investir
 mais tempo em qualquer outro lugar.
+
+## Chamada de voz (ToxAV)
+
+Pré-requisito: rebuild nativo depois de puxar essa mudança (`native/scripts/
+build_windows.ps1`) — sem isso `toxcore.dll` não tem os símbolos `toxav_*`
+e o app falha ao subir a chamada. Confirme `opus.dll` em
+`native/output/<Config>/` (o `libvpx` costuma linkar estático, então não
+gera um `.dll` próprio — isso é esperado).
+
+Teste com `TALKSNAP_PROFILE=teste1`/`teste2` (duas instâncias já amigas):
+
+1. teste1 abre a conversa com teste2 e clica no ícone de telefone na
+   barra superior — teste2 deve receber um diálogo "Chamada de [nome]"
+   com Atender/Recusar.
+2. teste2 clica em Atender — nos dois lados aparece a barra "Em chamada"
+   com o botão de mudo e de desligar.
+3. Fala num microfone de um lado e confirma que o áudio sai no
+   alto-falante/fone do outro lado (e vice-versa).
+4. Clica no ícone de mudo de um lado — confirma que o outro lado para de
+   ouvir esse áudio (mas continua ouvindo o próprio, já que o mudo só
+   afeta o que VOCÊ manda).
+5. Desliga de qualquer um dos lados — a barra de chamada some dos dois
+   lados.
+6. Repete o passo 1, mas dessa vez teste1 (quem ligou) desliga antes de
+   teste2 atender — confirma que o diálogo de "chamada recebida" em
+   teste2 fecha sozinho, sem precisar clicar em nada.

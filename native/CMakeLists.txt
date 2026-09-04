@@ -5,13 +5,14 @@
 #
 # Este projeto NÃO reimplementa nada do toxcore — ele apenas configura as
 # flags corretas do CMakeLists.txt oficial (em third_party/toxcore) para
-# gerar só o que o Talksnap precisa nesta fase: a libtoxcore compartilhada
-# (toxcore.dll no Windows), sem ToxAV e sem os binários de bootstrap node
-# (esses recursos entram em fases futuras do roadmap).
+# gerar só o que o Talksnap precisa: a libtoxcore compartilhada (toxcore.dll
+# no Windows), com ToxAV (chamada de voz) e sem os binários de bootstrap
+# node (esses continuam fora do escopo do app).
 #
-# libsodium (dependência obrigatória do toxcore) é obtida via vcpkg
-# (third_party/vcpkg), que a compila a partir do código-fonte no manifesto
-# do próprio vcpkg — nada de binário pré-compilado de terceiros.
+# libsodium/opus/libvpx (dependências obrigatórias do toxcore+toxav) são
+# obtidas via vcpkg (third_party/vcpkg), que as compila a partir do código-
+# fonte no manifesto do próprio vcpkg — nada de binário pré-compilado de
+# terceiros.
 
 cmake_minimum_required(VERSION 3.21)
 project(talksnap_native C)
@@ -20,8 +21,11 @@ project(talksnap_native C)
 # (definidas ANTES do add_subdirectory para que o CMakeLists.txt do toxcore
 # as leia como cache variables já setadas)
 
-set(BUILD_TOXAV OFF CACHE BOOL "Talksnap fase 0: ToxAV entra só na Fase 9" FORCE)
-set(MUST_BUILD_TOXAV OFF CACHE BOOL "" FORCE)
+# ToxAV (chamada de voz) — MUST_BUILD_TOXAV=ON faz o build FALHAR se
+# opus/libvpx não forem encontrados, em vez de desligar ToxAV em silêncio
+# (ver native/scripts/build_windows.ps1, que instala essas duas libs).
+set(BUILD_TOXAV ON CACHE BOOL "Talksnap: ToxAV habilitado (chamada de voz)" FORCE)
+set(MUST_BUILD_TOXAV ON CACHE BOOL "" FORCE)
 set(DHT_BOOTSTRAP OFF CACHE BOOL "Talksnap não precisa do binário DHT_bootstrap" FORCE)
 set(BOOTSTRAP_DAEMON OFF CACHE BOOL "Talksnap não precisa do tox-bootstrapd" FORCE)
 set(UNITTEST OFF CACHE BOOL "" FORCE)

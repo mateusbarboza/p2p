@@ -28,6 +28,7 @@ import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
 
+import 'package:ffi/ffi.dart' as pkg_ffi;
 import 'package:flutter/services.dart'
     show BackgroundIsolateBinaryMessenger, RootIsolateToken;
 import 'package:path/path.dart' as p;
@@ -37,6 +38,7 @@ import 'dev_profile.dart' show activeAccountSlug, setActiveAccountSlug;
 import 'identity_backup.dart' show resolveSavedataFile;
 import 'tox_bindings.dart';
 import 'tox_events.dart';
+import 'toxav_bindings.dart';
 
 /// Estado de uma transferência de arquivo ativa (em andamento no isolate).
 /// Vive só em memória — nada aqui é persistido diretamente; o isolate
@@ -74,6 +76,12 @@ const int _kSaveEveryNIterations = 200;
 /// instância ainda não conseguiu entrar na rede (ver Fase 6 — redes reais
 /// com NAT restritivo podem precisar de mais de uma tentativa).
 const Duration _kBootstrapRetryInterval = Duration(seconds: 15);
+
+/// Bit rate de áudio EM KBIT/S (não bits/s! — é assim que toxav_call/
+/// toxav_answer esperam, ver toxav.h) usado em toda chamada de voz: 32
+/// kbit/s é bom o suficiente pra Opus falado, sem vídeo (`video_bit_rate`
+/// sempre 0).
+const int _kCallAudioBitRate = 32;
 
 /// Payload enviado pelo isolate de rede para o isolate principal assim que
 /// ele nasce, contendo o SendPort que a UI deve usar para mandar comandos.
@@ -190,6 +198,37 @@ class ToxIsolateManager {
         SendMessageCommand(publicKeyHex: publicKeyHex, message: message));
   }
 
+  /// Avisa um contato que estamos (ou paramos de) digitar uma mensagem pra
+  /// ele — a UI chama isso a cada tecla (com debounce) e ao enviar/limpar o
+  /// campo de mensagem.
+  void setTyping(String publicKeyHex, bool isTyping) {
+    _sendCommand(
+        SetTypingCommand(publicKeyHex: publicKeyHex, isTyping: isTyping));
+  }
+
+  /// Liga (voz, sem vídeo) para um contato já conectado. O resultado chega
+  /// pela stream [updates] como [ToxCallStateEvent].
+  void startCall(String publicKeyHex) {
+    _sendCommand(StartCallCommand(publicKeyHex: publicKeyHex));
+  }
+
+  /// Atende uma chamada recebida (ver [ToxCallIncomingEvent]).
+  void answerCall(String publicKeyHex) {
+    _sendCommand(AnswerCallCommand(publicKeyHex: publicKeyHex));
+  }
+
+  /// Encerra ou recusa uma chamada (ativa ou ainda tocando).
+  void hangUp(String publicKeyHex) {
+    _sendCommand(HangUpCallCommand(publicKeyHex: publicKeyHex));
+  }
+
+  /// Manda um frame de áudio PCM16 (mono, 48kHz) capturado do microfone —
+  /// chamado a cada ~20ms enquanto a chamada está ativa e não está muda.
+  void sendCallAudioFrame(String publicKeyHex, Int16List samples) {
+    _sendCommand(SendCallAudioFrameCommand(
+        publicKeyHex: publicKeyHex, samples: samples));
+  }
+
   /// Oferece um arquivo local a um contato. O progresso chega pela stream
   /// [updates] como uma série de [ToxFileTransferEvent].
   void sendFile(String publicKeyHex, String filePath) {
@@ -297,6 +336,13 @@ class ToxIsolateManager {
   /// síncrona, dentro de `toxIterate()`, no mesmo isolate que os registrou.
   static SendPort? _networkEventSendPort;
 
+  /// Mesma justificativa do campo acima — os callbacks nativos da ToxAV só
+  /// recebem `ToxAV*` (não o `Tox*` associado), mas resolver a chave
+  /// pública de um `friend_number` precisa do `Tox*` (`friendGetPublicKey`
+  /// já existe em `ToxCoreBindings`, não faz sentido duplicar). Como só
+  /// existe UM `Tox*`/`ToxAV*` por isolate, guardar aqui é seguro.
+  static ffi.Pointer<ffi.Void>? _activeTox;
+
   /// Transferências de arquivo ativas, chaveadas por (friend_number,
   /// file_number) — ambos efêmeros por sessão, mas suficientes: só
   /// precisamos rastrear isso enquanto o isolate (e a transferência) está
@@ -336,6 +382,88 @@ class ToxIsolateManager {
         publicKeyHex: publicKeyHex,
         connection: ToxConnection.fromNative(connectionStatus),
       ),
+    );
+  }
+
+  static void _onFriendTypingNative(
+    ffi.Pointer<ffi.Void> tox,
+    int friendNumber,
+    int typing,
+    ffi.Pointer<ffi.Void> userData,
+  ) {
+    final bindings = ToxCoreBindings.instance;
+    final publicKeyHex = bindings.friendGetPublicKey(tox, friendNumber);
+    if (publicKeyHex == null) return;
+    _networkEventSendPort?.send(
+      ToxFriendTypingEvent(publicKeyHex: publicKeyHex, isTyping: typing != 0),
+    );
+  }
+
+  /// `av` só identifica a instância ToxAV, não o `Tox*` associado — usamos
+  /// [_activeTox] (só existe um por isolate) pra resolver a chave pública.
+  static void _onAvCallNative(
+    ffi.Pointer<ffi.Void> av,
+    int friendNumber,
+    int audioEnabled,
+    int videoEnabled,
+    ffi.Pointer<ffi.Void> userData,
+  ) {
+    // ignore: avoid_print
+    print('[call-debug] _onAvCallNative friendNumber=$friendNumber');
+    final tox = _activeTox;
+    if (tox == null) return;
+    final publicKeyHex =
+        ToxCoreBindings.instance.friendGetPublicKey(tox, friendNumber);
+    if (publicKeyHex == null) return;
+    _networkEventSendPort?.send(
+      ToxCallIncomingEvent(publicKeyHex: publicKeyHex),
+    );
+  }
+
+  static void _onAvCallStateNative(
+    ffi.Pointer<ffi.Void> av,
+    int friendNumber,
+    int state,
+    ffi.Pointer<ffi.Void> userData,
+  ) {
+    // ignore: avoid_print
+    print('[call-debug] _onAvCallStateNative friendNumber=$friendNumber '
+        'state=$state');
+    final tox = _activeTox;
+    if (tox == null) return;
+    final publicKeyHex =
+        ToxCoreBindings.instance.friendGetPublicKey(tox, friendNumber);
+    if (publicKeyHex == null) return;
+    _networkEventSendPort?.send(
+      ToxCallStateEvent(
+        publicKeyHex: publicKeyHex,
+        active: (state & kToxavFriendCallStateAcceptingA) != 0,
+        ended: (state &
+                (kToxavFriendCallStateFinished | kToxavFriendCallStateError)) !=
+            0,
+      ),
+    );
+  }
+
+  static void _onAvAudioReceiveFrameNative(
+    ffi.Pointer<ffi.Void> av,
+    int friendNumber,
+    ffi.Pointer<ffi.Int16> pcm,
+    int sampleCount,
+    int channels,
+    int samplingRate,
+    ffi.Pointer<ffi.Void> userData,
+  ) {
+    final tox = _activeTox;
+    if (tox == null) return;
+    final publicKeyHex =
+        ToxCoreBindings.instance.friendGetPublicKey(tox, friendNumber);
+    if (publicKeyHex == null) return;
+    // Cópia pra um Int16List Dart normal — o buffer nativo só é válido
+    // durante esta chamada de callback.
+    final samples = Int16List.fromList(pcm.asTypedList(sampleCount));
+    _networkEventSendPort?.send(
+      ToxCallAudioFrameEvent(publicKeyHex: publicKeyHex, samples: samples),
     );
   }
 
@@ -773,8 +901,10 @@ class ToxIsolateManager {
     // comandos que dependem dela verificam null em vez de travar caso a UI
     // mande algo antes do boot terminar.
     ffi.Pointer<ffi.Void>? tox;
+    ffi.Pointer<ffi.Void>? toxAv;
     File? saveFile;
     final bindings = ToxCoreBindings.instance;
+    final avBindings = ToxAvBindings.instance;
 
     Future<void> persistSavedata() async {
       final currentTox = tox;
@@ -918,6 +1048,75 @@ class ToxIsolateManager {
                 notConnected: e is ToxFriendNotConnectedException,
               ),
             );
+          }
+
+        case SetTypingCommand(:final publicKeyHex, :final isTyping):
+          final currentTox = tox;
+          if (currentTox == null) return;
+          final friendNumber = findFriendNumberByPublicKey(publicKeyHex);
+          if (friendNumber == null) return;
+          bindings.setSelfTyping(currentTox, friendNumber, isTyping);
+
+        case StartCallCommand(:final publicKeyHex):
+          final currentToxAv = toxAv;
+          if (currentToxAv == null) {
+            // ignore: avoid_print
+            print('[call-debug] StartCallCommand: toxAv é null');
+            return;
+          }
+          final friendNumber = findFriendNumberByPublicKey(publicKeyHex);
+          if (friendNumber == null) {
+            // ignore: avoid_print
+            print('[call-debug] StartCallCommand: friendNumber não encontrado');
+            return;
+          }
+          try {
+            avBindings.toxavCall(
+                currentToxAv, friendNumber, _kCallAudioBitRate);
+            // ignore: avoid_print
+            print('[call-debug] toxavCall OK friendNumber=$friendNumber');
+          } catch (e) {
+            // ignore: avoid_print
+            print('[call-debug] toxavCall FALHOU: $e');
+          }
+
+        case AnswerCallCommand(:final publicKeyHex):
+          final currentToxAv = toxAv;
+          if (currentToxAv == null) return;
+          final friendNumber = findFriendNumberByPublicKey(publicKeyHex);
+          if (friendNumber == null) return;
+          try {
+            avBindings.toxavAnswer(
+                currentToxAv, friendNumber, _kCallAudioBitRate);
+          } catch (_) {
+            // Mesmo raciocínio do StartCallCommand acima.
+          }
+
+        case HangUpCallCommand(:final publicKeyHex):
+          final currentToxAv = toxAv;
+          if (currentToxAv == null) return;
+          final friendNumber = findFriendNumberByPublicKey(publicKeyHex);
+          if (friendNumber == null) return;
+          avBindings.toxavCancelCall(currentToxAv, friendNumber);
+
+        case SendCallAudioFrameCommand(:final publicKeyHex, :final samples):
+          final currentToxAv = toxAv;
+          if (currentToxAv == null) return;
+          final friendNumber = findFriendNumberByPublicKey(publicKeyHex);
+          if (friendNumber == null) return;
+          final pcmPtr = pkg_ffi.calloc<ffi.Int16>(samples.length);
+          try {
+            pcmPtr.asTypedList(samples.length).setAll(0, samples);
+            avBindings.toxavAudioSendFrame(
+              currentToxAv,
+              friendNumber,
+              pcmPtr,
+              samples.length,
+              1,
+              48000,
+            );
+          } finally {
+            pkg_ffi.calloc.free(pcmPtr);
           }
 
         case SendFileCommand(:final publicKeyHex, :final filePath):
@@ -1185,6 +1384,7 @@ class ToxIsolateManager {
 
       tox = bindings.createToxInstance(savedata: savedata);
       final currentTox = tox!;
+      _activeTox = currentTox;
 
       if (savedata == null) {
         // Primeira execução: persiste a identidade recém-criada imediatamente,
@@ -1194,6 +1394,28 @@ class ToxIsolateManager {
       }
 
       bindings.bootstrapNetwork(currentTox);
+
+      // ToxAV (chamada de voz) — 1 instância por instância Tox, criada
+      // logo depois dele (ver toxav.h: "each ToxAV instance can be bound
+      // to only one Tox instance"). Destruída ANTES do tox no shutdown.
+      toxAv = avBindings.toxavNew(currentTox);
+      final currentToxAv = toxAv!;
+      // ignore: avoid_print
+      print('[call-debug] toxavNew OK, av=$currentToxAv');
+      avBindings.setCallCallback(
+        currentToxAv,
+        ffi.Pointer.fromFunction<ToxAvCallCallbackNative>(_onAvCallNative),
+      );
+      avBindings.setCallStateCallback(
+        currentToxAv,
+        ffi.Pointer.fromFunction<ToxAvCallStateCallbackNative>(
+            _onAvCallStateNative),
+      );
+      avBindings.setAudioReceiveFrameCallback(
+        currentToxAv,
+        ffi.Pointer.fromFunction<ToxAvAudioReceiveFrameCallbackNative>(
+            _onAvAudioReceiveFrameNative),
+      );
 
       bindings.setFriendRequestCallback(
         currentTox,
@@ -1210,6 +1432,11 @@ class ToxIsolateManager {
         currentTox,
         ffi.Pointer.fromFunction<ToxFriendMessageCallbackNative>(
             _onFriendMessageNative),
+      );
+      bindings.setFriendTypingCallback(
+        currentTox,
+        ffi.Pointer.fromFunction<ToxFriendTypingCallbackNative>(
+            _onFriendTypingNative),
       );
       bindings.setFriendReadReceiptCallback(
         currentTox,
@@ -1377,14 +1604,27 @@ class ToxIsolateManager {
           await persistSavedata();
         }
 
-        final intervalMs = bindings.toxIterationInterval(currentTox);
+        avBindings.toxavIterate(currentToxAv);
+
+        // As duas APIs pedem intervalos de iteração diferentes — usa o
+        // menor dos dois pra nenhuma ficar atrasada (ver toxav.h: "It is
+        // best called in the separate thread from tox_iterate", mas aqui
+        // roda tudo no mesmo loop assíncrono por simplicidade, já que
+        // nenhuma das duas bloqueia por muito tempo).
+        final intervalMs = [
+          bindings.toxIterationInterval(currentTox),
+          avBindings.toxavIterationInterval(currentToxAv),
+        ].reduce((a, b) => a < b ? a : b);
         await Future<void>.delayed(Duration(milliseconds: intervalMs));
       }
 
       // Encerramento limpo: persiste o estado final e libera a memória
-      // nativa alocada pelo toxcore.
+      // nativa alocada pelo toxcore. A ToxAV precisa morrer ANTES do tox
+      // associado (ver toxav.h).
       await persistSavedata();
+      avBindings.toxavKill(currentToxAv);
       bindings.toxKill(currentTox);
+      _activeTox = null;
       isolateReceivePort.close();
       Isolate.exit();
     }

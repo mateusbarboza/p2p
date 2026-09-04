@@ -32,6 +32,7 @@ class ContactViewModel {
     required this.statusMessage,
     required this.connection,
     required this.userStatus,
+    required this.isTyping,
   });
 
   final String publicKeyHex;
@@ -49,6 +50,10 @@ class ContactViewModel {
   /// só faz sentido considerar quando [connection] != none.
   final int userStatus;
 
+  /// `true` enquanto ele está digitando uma mensagem pra nós — nunca
+  /// persistido, só ao vivo (ver [ToxFriendTypingEvent]).
+  final bool isTyping;
+
   /// O que mostrar na UI: apelido local > nome do contato > chave pública.
   String get displayName {
     if (nickname != null && nickname!.isNotEmpty) return nickname!;
@@ -62,6 +67,7 @@ class ContactsNotifier extends Notifier<List<ContactViewModel>> {
   final Map<String, String> _nameByPublicKey = {};
   final Map<String, String> _statusMessageByPublicKey = {};
   final Map<String, int> _userStatusByPublicKey = {};
+  final Map<String, bool> _isTypingByPublicKey = {};
   List<Contact> _dbContacts = const [];
   StreamSubscription<List<Contact>>? _dbSubscription;
 
@@ -101,11 +107,16 @@ class ContactsNotifier extends Notifier<List<ContactViewModel>> {
         _userStatusByPublicKey[publicKeyHex] = userStatus;
         state = _merge();
 
+      case ToxFriendTypingEvent(:final publicKeyHex, :final isTyping):
+        _isTypingByPublicKey[publicKeyHex] = isTyping;
+        state = _merge();
+
       case ToxFriendRemovedEvent(:final publicKeyHex):
         _connectionByPublicKey.remove(publicKeyHex);
         _nameByPublicKey.remove(publicKeyHex);
         _statusMessageByPublicKey.remove(publicKeyHex);
         _userStatusByPublicKey.remove(publicKeyHex);
+        _isTypingByPublicKey.remove(publicKeyHex);
         unawaited(repository.delete(publicKeyHex));
 
       case ToxSelfStatusEvent():
@@ -128,6 +139,9 @@ class ContactsNotifier extends Notifier<List<ContactViewModel>> {
       case ToxGroupPeerNameEvent():
       case ToxGroupLeftEvent():
       case ToxGroupInviteSentEvent():
+      case ToxCallIncomingEvent():
+      case ToxCallStateEvent():
+      case ToxCallAudioFrameEvent():
         break;
     }
   }
@@ -144,6 +158,7 @@ class ContactsNotifier extends Notifier<List<ContactViewModel>> {
               ToxConnection.none,
           userStatus: _userStatusByPublicKey[contact.publicKeyHex] ??
               kToxUserStatusNone,
+          isTyping: _isTypingByPublicKey[contact.publicKeyHex] ?? false,
         ),
     ];
   }

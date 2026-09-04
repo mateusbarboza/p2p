@@ -15,14 +15,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import 'data/database.dart' show FileTransfer, Message;
+import 'data/database.dart' show CallLog, FileTransfer, Message;
 import 'date_divider.dart';
+import 'providers/call_provider.dart';
+import 'providers/contacts_provider.dart';
 import 'providers/database_provider.dart';
 import 'providers/file_transfers_provider.dart';
 import 'providers/messages_provider.dart';
 import 'providers/tox_events_provider.dart';
 import 'providers/tox_manager_provider.dart';
 import 'tox_events.dart';
+
+/// Depois de quanto tempo sem digitar avisamos o contato que paramos —
+/// mesmo valor usado por outros clientes Tox (qTox, Toxic).
+const _kTypingStopDelay = Duration(seconds: 5);
 
 sealed class _TimelineItem {
   const _TimelineItem();
@@ -41,6 +47,13 @@ class _FileTransferItem extends _TimelineItem {
   final FileTransfer transfer;
   @override
   DateTime get timestamp => transfer.timestamp;
+}
+
+class _CallLogItem extends _TimelineItem {
+  const _CallLogItem(this.log);
+  final CallLog log;
+  @override
+  DateTime get timestamp => log.timestamp;
 }
 
 class ChatScreen extends ConsumerStatefulWidget {
@@ -94,6 +107,12 @@ const List<String> _kQuickEmojis = [
 class _ChatScreenState extends ConsumerState<ChatScreen> {
   final TextEditingController _messageController = TextEditingController();
 
+  /// Só manda `SetTypingCommand(true)` uma vez ao começar a digitar (não a
+  /// cada tecla) — [_typingStopTimer] é quem reseta isso depois de um
+  /// tempo sem novas teclas, avisando que paramos.
+  bool _isTypingNotified = false;
+  Timer? _typingStopTimer;
+
   @override
   void initState() {
     super.initState();
@@ -105,6 +124,34 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           .read(messagesRepositoryProvider)
           .markAllRead(widget.contactPublicKeyHex),
     );
+    _messageController.addListener(_onMessageTextChanged);
+  }
+
+  void _onMessageTextChanged() {
+    final hasText = _messageController.text.isNotEmpty;
+    _typingStopTimer?.cancel();
+    if (!hasText) {
+      _stopTyping();
+      return;
+    }
+    if (!_isTypingNotified) {
+      _isTypingNotified = true;
+      ref.read(toxIsolateManagerProvider).setTyping(
+            widget.contactPublicKeyHex,
+            true,
+          );
+    }
+    _typingStopTimer = Timer(_kTypingStopDelay, _stopTyping);
+  }
+
+  void _stopTyping() {
+    _typingStopTimer?.cancel();
+    if (!_isTypingNotified) return;
+    _isTypingNotified = false;
+    ref.read(toxIsolateManagerProvider).setTyping(
+          widget.contactPublicKeyHex,
+          false,
+        );
   }
 
   /// Insere o emoji na posição do cursor em vez de sempre no fim — assim
@@ -220,6 +267,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   @override
   void dispose() {
+    _typingStopTimer?.cancel();
+    if (_isTypingNotified) {
+      ref.read(toxIsolateManagerProvider).setTyping(
+            widget.contactPublicKeyHex,
+            false,
+          );
+    }
+    _messageController.removeListener(_onMessageTextChanged);
     _messageController.dispose();
     super.dispose();
   }
@@ -275,14 +330,40 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ref.watch(chatMessagesProvider(widget.contactPublicKeyHex));
     final transfersAsync =
         ref.watch(fileTransfersProvider(widget.contactPublicKeyHex));
+    final callLogsAsync =
+        ref.watch(callLogsForContactProvider(widget.contactPublicKeyHex));
+    final contacts = ref.watch(contactsProvider);
+    final isContactTyping = contacts
+        .where((c) => c.publicKeyHex == widget.contactPublicKeyHex)
+        .any((c) => c.isTyping);
+
+    final callState = ref.watch(callProvider);
+    final isThisContactInCall =
+        callState.contactPublicKeyHex == widget.contactPublicKeyHex &&
+            callState.status != CallStatus.idle;
 
     return Scaffold(
-      appBar: AppBar(title: Text(widget.contactLabel)),
+      appBar: AppBar(
+        title: Text(widget.contactLabel),
+        actions: [_buildCallAction(callState, isThisContactInCall)],
+      ),
       body: Column(
         children: [
           Expanded(
-            child: _buildTimeline(messagesAsync, transfersAsync),
+            child: _buildTimeline(messagesAsync, transfersAsync, callLogsAsync),
           ),
+          if (isContactTyping)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Digitando...',
+                  style: TextStyle(
+                      color: Colors.green, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ),
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.all(8),
@@ -316,9 +397,35 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     );
   }
 
+  Widget _buildCallAction(CallState callState, bool isThisContactInCall) {
+    if (!isThisContactInCall) {
+      return IconButton(
+        icon: const Icon(Icons.call),
+        tooltip: 'Ligar',
+        onPressed: () => ref
+            .read(callProvider.notifier)
+            .startCall(widget.contactPublicKeyHex),
+      );
+    }
+    if (callState.status == CallStatus.incomingRinging) {
+      return IconButton(
+        icon: const Icon(Icons.call),
+        tooltip: 'Atender',
+        onPressed: () => ref.read(callProvider.notifier).answer(),
+      );
+    }
+    return IconButton(
+      icon: const Icon(Icons.call_end),
+      color: Colors.red,
+      tooltip: 'Desligar',
+      onPressed: () => ref.read(callProvider.notifier).hangUp(),
+    );
+  }
+
   Widget _buildTimeline(
     AsyncValue<List<Message>> messagesAsync,
     AsyncValue<List<FileTransfer>> transfersAsync,
+    AsyncValue<List<CallLog>> callLogsAsync,
   ) {
     if (messagesAsync.isLoading || transfersAsync.isLoading) {
       return const Center(child: CircularProgressIndicator());
@@ -338,6 +445,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         _MessageItem(message),
       for (final transfer in transfersAsync.value ?? const <FileTransfer>[])
         _FileTransferItem(transfer),
+      for (final log in callLogsAsync.value ?? const <CallLog>[])
+        _CallLogItem(log),
     ]..sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
     if (items.isEmpty) {
@@ -368,6 +477,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     transfer.toxFileNumber, ToxFileControlAction.cancel),
               ),
             ),
+          _CallLogItem(:final log) => _CallLogBubble(log: log),
         };
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -434,6 +544,49 @@ class _HoverDeleteWrapperState extends State<_HoverDeleteWrapper> {
         children: widget.alignRight
             ? [menuButton, Flexible(child: widget.child)]
             : [Flexible(child: widget.child), menuButton],
+      ),
+    );
+  }
+}
+
+/// Linha informativa de chamada de voz na timeline — "Chamada de voz
+/// iniciada/recebida" ou "Chamada encerrada", sempre com o horário. Não é
+/// uma bolha de mensagem (nem tem "apagar" — ver [_HoverDeleteWrapper]):
+/// fica centralizada, como o [DateDivider].
+class _CallLogBubble extends StatelessWidget {
+  const _CallLogBubble({required this.log});
+
+  final CallLog log;
+
+  @override
+  Widget build(BuildContext context) {
+    final time = '${log.timestamp.hour.toString().padLeft(2, '0')}:'
+        '${log.timestamp.minute.toString().padLeft(2, '0')}';
+    final label = switch (log.kind) {
+      'started' =>
+        log.outgoing ? 'Chamada de voz iniciada' : 'Chamada de voz recebida',
+      'ended' => 'Chamada encerrada',
+      _ => 'Chamada de voz',
+    };
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.call, size: 14),
+              const SizedBox(width: 6),
+              Text('$label — $time',
+                  style: Theme.of(context).textTheme.labelSmall),
+            ],
+          ),
+        ),
       ),
     );
   }

@@ -6,6 +6,7 @@
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../data/call_logs_repository.dart';
 import '../data/contacts_repository.dart';
 import '../data/database.dart';
 import '../data/file_transfers_repository.dart';
@@ -27,6 +28,10 @@ final contactsRepositoryProvider = Provider<ContactsRepository>((ref) {
 
 final messagesRepositoryProvider = Provider<MessagesRepository>((ref) {
   return MessagesRepository(ref.watch(appDatabaseProvider));
+});
+
+final callLogsRepositoryProvider = Provider<CallLogsRepository>((ref) {
+  return CallLogsRepository(ref.watch(appDatabaseProvider));
 });
 
 final fileTransfersRepositoryProvider =

@@ -1,13 +1,15 @@
 # build_windows.ps1
 #
 # Compila a toolchain nativa do Talksnap para Windows, do zero:
-#   1) vcpkg (submodule) compila libsodium a partir do codigo-fonte.
-#   2) CMake configura e compila o toxcore (submodule) como toxcore.dll,
-#      linkado contra essa libsodium, usando as flags definidas em
-#      native/CMakeLists.txt (sem ToxAV, sem bootstrap daemon nesta fase).
-#   3) Os artefatos (toxcore.dll + sodium.dll) sao copiados para
-#      native/output/<Config>/ prontos para serem usados pelo runner do
-#      Flutter Windows.
+#   1) vcpkg (submodule) compila libsodium, pthreads, opus e libvpx a
+#      partir do codigo-fonte (opus/libvpx sao as dependencias do ToxAV,
+#      usado para chamada de voz).
+#   2) CMake configura e compila o toxcore (submodule) como toxcore.dll
+#      (com ToxAV embutido), linkado contra essas libs, usando as flags
+#      definidas em native/CMakeLists.txt (sem bootstrap daemon).
+#   3) Os artefatos (toxcore.dll + sodium.dll + opus.dll + vpx.dll) sao
+#      copiados para native/output/<Config>/ prontos para serem usados
+#      pelo runner do Flutter Windows.
 #
 # Pre-requisitos na maquina de quem roda este script (nao instalados por
 # ele): Visual Studio 2022 com a carga de trabalho "Desenvolvimento para
@@ -63,11 +65,13 @@ if (-not (Test-Path $VcpkgExe)) {
     if ($LASTEXITCODE -ne 0) { throw "Falha ao inicializar o vcpkg." }
 }
 
-Write-Host "==> Compilando libsodium e pthreads (pthreads4w) via vcpkg (triplet $Triplet)..." -ForegroundColor Cyan
+Write-Host "==> Compilando libsodium, pthreads, opus e libvpx via vcpkg (triplet $Triplet)..." -ForegroundColor Cyan
 # pthreads: o toxcore usa a API POSIX de threads (pthread.h) mesmo no
 # Windows/MSVC, entao precisa dessa implementacao (pthreads4w) para compilar.
-& $VcpkgExe install "libsodium:$Triplet" "pthreads:$Triplet"
-if ($LASTEXITCODE -ne 0) { throw "Falha ao compilar libsodium/pthreads via vcpkg." }
+# opus/libvpx: dependencias do ToxAV (chamada de voz) -- o CMakeLists.txt do
+# toxcore exige as duas para habilitar BUILD_TOXAV, mesmo so usando audio.
+& $VcpkgExe install "libsodium:$Triplet" "pthreads:$Triplet" "opus:$Triplet" "libvpx:$Triplet"
+if ($LASTEXITCODE -ne 0) { throw "Falha ao compilar libsodium/pthreads/opus/libvpx via vcpkg." }
 
 # --- 2) Configura e compila o toxcore com CMake ----------------------------
 $ToolchainFile = Join-Path $VcpkgDir "scripts\buildsystems\vcpkg.cmake"
@@ -95,8 +99,8 @@ if (-not $ToxcoreDll) {
 if (-not $ToxcoreDll) { throw "toxcore.dll nao foi encontrado apos o build. Verifique o log acima." }
 
 # O MSBuild/vcpkg ja copia automaticamente (deploy "applocal") as DLLs de
-# dependencia (libsodium.dll, pthreadVC3(d).dll, e futuramente opus/vpx)
-# para a mesma pasta do toxcore.dll. Copiamos a pasta inteira em vez de
+# dependencia (libsodium.dll, pthreadVC3(d).dll, opus.dll, vpx.dll) para a
+# mesma pasta do toxcore.dll. Copiamos a pasta inteira em vez de
 # caçar nomes de arquivo especificos, para não quebrar quando novas
 # dependencias nativas forem adicionadas (ex: ToxAV na Fase 9).
 Copy-Item "$($ToxcoreDll.DirectoryName)\*.dll" -Destination $OutputDir -Force

@@ -9,15 +9,15 @@ do zero, sem baixar binários pré-compilados de terceiros. O resultado
 
 ```
 native/
-  CMakeLists.txt         # flags do Talksnap para o build do toxcore (sem ToxAV/bootstrap nesta fase)
+  CMakeLists.txt         # flags do Talksnap para o build do toxcore (ToxAV habilitado, sem bootstrap)
   scripts/
     build_windows.ps1    # build completo para Windows (vcpkg + CMake)
   third_party/
     toxcore/              # git submodule -> TokTok/c-toxcore, pinado em v0.2.23
     vcpkg/                 # git submodule -> microsoft/vcpkg, pinado em 2026.07.29
-                            # (usado só para compilar libsodium a partir do código-fonte)
+                            # (usado para compilar libsodium/opus/libvpx a partir do código-fonte)
   build/                  # saída do CMake (gerado, git-ignorado)
-  output/<Config>/        # toxcore.dll + sodium.dll prontos para uso (gerado, git-ignorado)
+  output/<Config>/        # toxcore.dll + sodium/opus/vpx.dll prontos para uso (gerado, git-ignorado)
 ```
 
 ## Pré-requisitos (na máquina onde o build roda)
@@ -43,12 +43,16 @@ pwsh native/scripts/build_windows.ps1 -Config Release
 
 O script:
 1. Faz bootstrap do vcpkg (`third_party/vcpkg`) na primeira execução.
-2. Manda o vcpkg compilar `libsodium` a partir do código-fonte (triplet `x64-windows`).
+2. Manda o vcpkg compilar `libsodium`, `pthreads`, `opus` e `libvpx` a
+   partir do código-fonte (triplet `x64-windows`) — as duas últimas são as
+   dependências do ToxAV (chamada de voz).
 3. Configura e compila `third_party/toxcore` via CMake, usando o toolchain
-   do vcpkg para achar a libsodium recém-compilada, com as flags definidas
-   em `native/CMakeLists.txt` (sem ToxAV, sem `DHT_bootstrap`/`tox-bootstrapd`
-   — esses binários não são usados pelo app).
-4. Copia `toxcore.dll` e `sodium.dll` para `native/output/<Config>/`.
+   do vcpkg para achar essas libs recém-compiladas, com as flags definidas
+   em `native/CMakeLists.txt` (ToxAV habilitado, sem
+   `DHT_bootstrap`/`tox-bootstrapd` — esses binários não são usados pelo
+   app).
+4. Copia `toxcore.dll`, `sodium.dll`, `opus.dll` e `vpx.dll` para
+   `native/output/<Config>/`.
 
 ## Integrando com o Flutter Windows
 

@@ -28,6 +28,8 @@ dependencies:
   # local_notifier: notificação nativa do Windows quando chega mensagem
   # (1:1 ou grupo) — ver providers/notifications_provider.dart.
   local_notifier: ^0.1.6
+  record: ^7.1.1
+  flutter_soloud: ^5.0.2
 
 dev_dependencies:
   flutter_test:
