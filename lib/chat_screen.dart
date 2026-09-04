@@ -16,6 +16,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'data/database.dart' show FileTransfer, Message;
+import 'date_divider.dart';
 import 'providers/database_provider.dart';
 import 'providers/file_transfers_provider.dart';
 import 'providers/messages_provider.dart';
@@ -92,6 +93,19 @@ const List<String> _kQuickEmojis = [
 
 class _ChatScreenState extends ConsumerState<ChatScreen> {
   final TextEditingController _messageController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    // A tela abriu justamente NESTE contato — marca como lida a conversa
+    // inteira (mesmo que a lista de contatos ainda não tenha aberto essa
+    // tela nenhuma vez até agora).
+    unawaited(
+      ref
+          .read(messagesRepositoryProvider)
+          .markAllRead(widget.contactPublicKeyHex),
+    );
+  }
 
   /// Insere o emoji na posição do cursor em vez de sempre no fim — assim
   /// funciona também quando a pessoa já digitou algo e move o cursor antes
@@ -217,11 +231,34 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     // acontecer, sem entender por quê.
     ref.listen(toxNetworkEventsProvider, (previous, next) {
       next.whenData((event) {
+        // Mensagem chegou com a conversa já aberta: marca como lida na
+        // hora, sem esperar o usuário reabrir a tela.
+        if (event is ToxFriendMessageEvent &&
+            event.publicKeyHex == widget.contactPublicKeyHex) {
+          unawaited(
+            ref
+                .read(messagesRepositoryProvider)
+                .markAllRead(widget.contactPublicKeyHex),
+          );
+        }
         String? errorMessage;
         if (event is ToxMessageSentEvent &&
             !event.success &&
             event.publicKeyHex == widget.contactPublicKeyHex) {
-          errorMessage = 'Falha ao enviar mensagem: ${event.errorMessage}';
+          // Contato offline no momento: guarda como pendente em vez de
+          // mostrar erro — messages_provider.dart reenvia sozinho assim que
+          // ele conectar de novo (ToxFriendConnectionEvent).
+          if (event.notConnected) {
+            unawaited(
+              ref.read(messagesRepositoryProvider).insertPending(
+                    contactPublicKeyHex: widget.contactPublicKeyHex,
+                    body: event.message,
+                    timestamp: DateTime.now(),
+                  ),
+            );
+          } else {
+            errorMessage = 'Falha ao enviar mensagem: ${event.errorMessage}';
+          }
         } else if (event is ToxFileTransferEvent &&
             event.phase == ToxFileTransferPhase.failed &&
             event.publicKeyHex == widget.contactPublicKeyHex) {
@@ -312,7 +349,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       itemCount: items.length,
       itemBuilder: (context, index) {
         final item = items[index];
-        return switch (item) {
+        final showDateDivider = index == 0 ||
+            !isSameDay(items[index - 1].timestamp, item.timestamp);
+        final bubble = switch (item) {
           _MessageItem(:final message) => _HoverDeleteWrapper(
               alignRight: message.outgoing,
               onDelete: () => _deleteMessage(message),
@@ -330,6 +369,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               ),
             ),
         };
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (showDateDivider) DateDivider(date: item.timestamp),
+            bubble,
+          ],
+        );
       },
     );
   }
@@ -431,7 +477,9 @@ class _MessageBubble extends StatelessWidget {
               if (message.outgoing) ...[
                 const SizedBox(width: 4),
                 Icon(
-                  message.delivered ? Icons.done_all : Icons.done,
+                  message.pending
+                      ? Icons.schedule
+                      : (message.delivered ? Icons.done_all : Icons.done),
                   size: 14,
                   color: message.delivered ? Colors.blue : null,
                 ),

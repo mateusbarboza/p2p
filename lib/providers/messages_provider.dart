@@ -17,11 +17,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/database.dart' show Message;
 import '../data/messages_repository.dart';
+import '../tox_bindings.dart' show ToxConnection;
 import '../tox_events.dart';
 import 'database_provider.dart';
 import 'tox_events_provider.dart';
+import 'tox_manager_provider.dart';
 
 class MessagesSyncNotifier extends Notifier<void> {
+  /// Contatos com um reenvio de pendentes em andamento — evita disparar o
+  /// mesmo lote de novo se `ToxFriendConnectionEvent` chegar mais de uma vez
+  /// seguida (reconexões instáveis, por exemplo).
+  final Set<String> _retrying = {};
+
   @override
   void build() {
     final repository = ref.watch(messagesRepositoryProvider);
@@ -52,20 +59,29 @@ class MessagesSyncNotifier extends Notifier<void> {
           :final toxMessageId,
           :final sentAt,
         ):
-        unawaited(
-          repository.insertOutgoing(
-            contactPublicKeyHex: publicKeyHex,
-            body: message,
-            toxMessageId: toxMessageId!,
-            timestamp: sentAt!,
-          ),
-        );
+        unawaited(_resolveOrInsert(
+          repository: repository,
+          publicKeyHex: publicKeyHex,
+          message: message,
+          toxMessageId: toxMessageId!,
+          sentAt: sentAt!,
+        ));
+
+      // Contato offline no momento do envio: a mensagem já foi salva como
+      // pendente por _send() na tela de chat — nada a fazer aqui além de
+      // deixar quieto (ver ToxFriendConnectionEvent abaixo para o reenvio).
+      case ToxMessageSentEvent(success: false, notConnected: true):
+        break;
 
       case ToxMessageReadReceiptEvent(:final publicKeyHex, :final toxMessageId):
         unawaited(
           repository.markDelivered(
               contactPublicKeyHex: publicKeyHex, toxMessageId: toxMessageId),
         );
+
+      case ToxFriendConnectionEvent(:final publicKeyHex, :final connection)
+          when connection != ToxConnection.none:
+        unawaited(_retryPending(repository, publicKeyHex));
 
       case ToxMessageSentEvent():
       case ToxSelfStatusEvent():
@@ -91,6 +107,48 @@ class MessagesSyncNotifier extends Notifier<void> {
         break;
     }
   }
+
+  /// Uma mensagem enviada com sucesso pode ser um envio normal (contato já
+  /// estava online: insere uma linha nova) ou a confirmação de uma mensagem
+  /// que tinha sido salva como pendente (contato estava offline: atualiza a
+  /// linha existente em vez de duplicá-la na timeline).
+  Future<void> _resolveOrInsert({
+    required MessagesRepository repository,
+    required String publicKeyHex,
+    required String message,
+    required int toxMessageId,
+    required DateTime sentAt,
+  }) async {
+    final pending = await repository.pendingForContact(publicKeyHex);
+    final matches = pending.where((m) => m.body == message);
+    final match = matches.isEmpty ? null : matches.first;
+    if (match != null) {
+      await repository.resolvePending(id: match.id, toxMessageId: toxMessageId);
+    } else {
+      await repository.insertOutgoing(
+        contactPublicKeyHex: publicKeyHex,
+        body: message,
+        toxMessageId: toxMessageId,
+        timestamp: sentAt,
+      );
+    }
+  }
+
+  /// Reenvia, em ordem, toda mensagem que ficou pendente com esse contato
+  /// enquanto ele estava offline — chamado assim que ele conecta de novo.
+  Future<void> _retryPending(
+      MessagesRepository repository, String publicKeyHex) async {
+    if (!_retrying.add(publicKeyHex)) return;
+    try {
+      final pending = await repository.pendingForContact(publicKeyHex);
+      final manager = ref.read(toxIsolateManagerProvider);
+      for (final message in pending) {
+        manager.sendMessage(publicKeyHex, message.body);
+      }
+    } finally {
+      _retrying.remove(publicKeyHex);
+    }
+  }
 }
 
 final messagesSyncProvider = NotifierProvider<MessagesSyncNotifier, void>(
@@ -106,4 +164,13 @@ final chatMessagesProvider =
   // chat tenha sido aberta ainda nesta sessão.
   ref.watch(messagesSyncProvider);
   return ref.watch(messagesRepositoryProvider).watchForContact(publicKeyHex);
+});
+
+/// Quantas mensagens não lidas tem com um contato — mostrado como badge na
+/// listagem de contatos. `family` por contato, mesmo raciocínio de
+/// [chatMessagesProvider].
+final unreadMessagesCountProvider =
+    StreamProvider.family<int, String>((ref, publicKeyHex) {
+  ref.watch(messagesSyncProvider);
+  return ref.watch(messagesRepositoryProvider).watchUnreadCount(publicKeyHex);
 });

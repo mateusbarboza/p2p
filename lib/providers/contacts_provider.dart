@@ -19,7 +19,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/database.dart' show Contact;
-import '../tox_bindings.dart' show ToxConnection;
+import '../tox_bindings.dart' show ToxConnection, kToxUserStatusNone;
 import '../tox_events.dart';
 import 'database_provider.dart';
 import 'tox_events_provider.dart';
@@ -31,6 +31,7 @@ class ContactViewModel {
     required this.toxName,
     required this.statusMessage,
     required this.connection,
+    required this.userStatus,
   });
 
   final String publicKeyHex;
@@ -44,6 +45,10 @@ class ContactViewModel {
   final String? statusMessage;
   final ToxConnection connection;
 
+  /// Presença que ELE escolheu (Online/Ausente/Ocupado — kToxUserStatus*),
+  /// só faz sentido considerar quando [connection] != none.
+  final int userStatus;
+
   /// O que mostrar na UI: apelido local > nome do contato > chave pública.
   String get displayName {
     if (nickname != null && nickname!.isNotEmpty) return nickname!;
@@ -56,6 +61,7 @@ class ContactsNotifier extends Notifier<List<ContactViewModel>> {
   final Map<String, ToxConnection> _connectionByPublicKey = {};
   final Map<String, String> _nameByPublicKey = {};
   final Map<String, String> _statusMessageByPublicKey = {};
+  final Map<String, int> _userStatusByPublicKey = {};
   List<Contact> _dbContacts = const [];
   StreamSubscription<List<Contact>>? _dbSubscription;
 
@@ -87,16 +93,19 @@ class ContactsNotifier extends Notifier<List<ContactViewModel>> {
       case ToxFriendProfileEvent(
           :final publicKeyHex,
           :final name,
-          :final statusMessage
+          :final statusMessage,
+          :final userStatus
         ):
         _nameByPublicKey[publicKeyHex] = name;
         _statusMessageByPublicKey[publicKeyHex] = statusMessage;
+        _userStatusByPublicKey[publicKeyHex] = userStatus;
         state = _merge();
 
       case ToxFriendRemovedEvent(:final publicKeyHex):
         _connectionByPublicKey.remove(publicKeyHex);
         _nameByPublicKey.remove(publicKeyHex);
         _statusMessageByPublicKey.remove(publicKeyHex);
+        _userStatusByPublicKey.remove(publicKeyHex);
         unawaited(repository.delete(publicKeyHex));
 
       case ToxSelfStatusEvent():
@@ -133,6 +142,8 @@ class ContactsNotifier extends Notifier<List<ContactViewModel>> {
           statusMessage: _statusMessageByPublicKey[contact.publicKeyHex],
           connection: _connectionByPublicKey[contact.publicKeyHex] ??
               ToxConnection.none,
+          userStatus: _userStatusByPublicKey[contact.publicKeyHex] ??
+              kToxUserStatusNone,
         ),
     ];
   }

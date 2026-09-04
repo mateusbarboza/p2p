@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../dev_profile.dart';
+import '../tox_bindings.dart' show kToxUserStatusNone;
 import '../tox_events.dart';
 import 'tox_events_provider.dart';
 import 'tox_manager_provider.dart';
@@ -24,12 +25,17 @@ class SelfProfile {
     this.name = '',
     this.statusMessage = '',
     this.avatarPath,
+    this.userStatus = kToxUserStatusNone,
     this.loaded = false,
   });
 
   final String name;
   final String statusMessage;
   final String? avatarPath;
+
+  /// Status de presença escolhido manualmente (ver kToxUserStatus* em
+  /// tox_bindings.dart) — diferente da conectividade de rede.
+  final int userStatus;
 
   /// `true` assim que o primeiro [ToxSelfProfileEvent] chega (nome/status
   /// já lidos do savedata, mesmo que vazios). Distingue "ainda carregando"
@@ -42,12 +48,14 @@ class SelfProfile {
     String? name,
     String? statusMessage,
     String? avatarPath,
+    int? userStatus,
     bool? loaded,
   }) {
     return SelfProfile(
       name: name ?? this.name,
       statusMessage: statusMessage ?? this.statusMessage,
       avatarPath: avatarPath ?? this.avatarPath,
+      userStatus: userStatus ?? this.userStatus,
       loaded: loaded ?? this.loaded,
     );
   }
@@ -62,6 +70,7 @@ class SelfProfileNotifier extends Notifier<SelfProfile> {
           state = state.copyWith(
             name: event.name,
             statusMessage: event.statusMessage,
+            userStatus: event.userStatus,
             loaded: true,
           );
         }
@@ -84,6 +93,11 @@ class SelfProfileNotifier extends Notifier<SelfProfile> {
   /// toxcore (ToxIsolateManager.setProfile).
   void updateNameAndStatus(String name, String statusMessage) {
     ref.read(toxIsolateManagerProvider).setProfile(name, statusMessage);
+  }
+
+  /// Muda o status de presença (Online/Ausente/Ocupado).
+  void updateUserStatus(int userStatus) {
+    ref.read(toxIsolateManagerProvider).setUserStatus(userStatus);
   }
 
   /// Atualiza o avatar (só local — nunca sai desta máquina).

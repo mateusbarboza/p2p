@@ -33,6 +33,7 @@ import 'package:flutter/services.dart'
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import 'dev_profile.dart' show activeAccountSlug, setActiveAccountSlug;
 import 'identity_backup.dart' show resolveSavedataFile;
 import 'tox_bindings.dart';
 import 'tox_events.dart';
@@ -90,10 +91,17 @@ class _IsolateBootstrapArgs {
   const _IsolateBootstrapArgs({
     required this.mainSendPort,
     required this.rootIsolateToken,
+    required this.activeAccountSlug,
   });
 
   final SendPort mainSendPort;
   final RootIsolateToken rootIsolateToken;
+
+  /// A conta local ativa (ver dev_profile.dart) precisa ser passada
+  /// explicitamente — isolates não compartilham memória com o isolate
+  /// principal, então a variável global lá não é vista aqui dentro sem
+  /// isso, mesmo que já esteja definida quando o isolate nasce.
+  final String? activeAccountSlug;
 }
 
 /// Gerencia o ciclo de vida completo do isolate de rede Tox: criação,
@@ -106,6 +114,12 @@ class ToxIsolateManager {
   Isolate? _isolate;
   SendPort? _commandPortToIsolate;
   StreamSubscription<dynamic>? _subscription;
+
+  /// Evita rodar [stop] duas vezes (ex: chamado explicitamente ao trocar de
+  /// conta E de novo pelo `ref.onDispose` automático do Riverpod ao
+  /// derrubar o ProviderScope aninhado) — sem isso, fechar
+  /// [_updatesController] pela segunda vez lançaria `StateError`.
+  bool _stopped = false;
 
   /// Stream que a UI escuta para reagir a eventos de rede em tempo real.
   Stream<ToxNetworkEvent> get updates => _updatesController.stream;
@@ -130,6 +144,7 @@ class ToxIsolateManager {
       _IsolateBootstrapArgs(
         mainSendPort: _mainReceivePort.sendPort,
         rootIsolateToken: rootIsolateToken,
+        activeAccountSlug: activeAccountSlug,
       ),
       debugName: 'talksnap-tox-network',
     );
@@ -198,6 +213,12 @@ class ToxIsolateManager {
     _sendCommand(SetProfileCommand(name: name, statusMessage: statusMessage));
   }
 
+  /// Muda o status de presença (Online/Ausente/Ocupado — ver
+  /// kToxUserStatus* em tox_bindings.dart).
+  void setUserStatus(int userStatus) {
+    _sendCommand(SetUserStatusCommand(userStatus: userStatus));
+  }
+
   /// Cria um novo grupo privado. O resultado chega como
   /// [ToxGroupCreatedEvent].
   void createGroup(String groupName) {
@@ -253,6 +274,8 @@ class ToxIsolateManager {
 
   /// Encerra a rede Tox de forma limpa e derruba o isolate.
   Future<void> stop() async {
+    if (_stopped) return;
+    _stopped = true;
     _sendCommand(const StopCommand());
     await _subscription?.cancel();
     _mainReceivePort.close();
@@ -540,6 +563,7 @@ class ToxIsolateManager {
         publicKeyHex: publicKeyHex,
         name: bindings.readUtf8(name, length),
         statusMessage: bindings.friendGetStatusMessage(tox, friendNumber),
+        userStatus: bindings.friendGetUserStatus(tox, friendNumber),
       ),
     );
   }
@@ -559,6 +583,26 @@ class ToxIsolateManager {
         publicKeyHex: publicKeyHex,
         name: bindings.friendGetName(tox, friendNumber),
         statusMessage: bindings.readUtf8(message, length),
+        userStatus: bindings.friendGetUserStatus(tox, friendNumber),
+      ),
+    );
+  }
+
+  static void _onFriendUserStatusNative(
+    ffi.Pointer<ffi.Void> tox,
+    int friendNumber,
+    int status,
+    ffi.Pointer<ffi.Void> userData,
+  ) {
+    final bindings = ToxCoreBindings.instance;
+    final publicKeyHex = bindings.friendGetPublicKey(tox, friendNumber);
+    if (publicKeyHex == null) return;
+    _networkEventSendPort?.send(
+      ToxFriendProfileEvent(
+        publicKeyHex: publicKeyHex,
+        name: bindings.friendGetName(tox, friendNumber),
+        statusMessage: bindings.friendGetStatusMessage(tox, friendNumber),
+        userStatus: status,
       ),
     );
   }
@@ -705,6 +749,12 @@ class ToxIsolateManager {
   }
 
   static void _toxNetworkIsolateEntryPoint(_IsolateBootstrapArgs args) {
+    // Precisa ser a primeiríssima coisa: resolveSavedataFile() (chamado logo
+    // abaixo em networkLoop) depende disso pra apontar pro arquivo da conta
+    // certa — sem isso, essa cópia isolada da variável ficaria `null` pra
+    // sempre, mesmo com a conta certa já ativa no isolate principal.
+    setActiveAccountSlug(args.activeAccountSlug);
+
     final mainSendPort = args.mainSendPort;
     final isolateReceivePort = ReceivePort();
 
@@ -820,14 +870,19 @@ class ToxIsolateManager {
           final currentTox = tox;
           if (currentTox == null) return;
           final friendNumber = findFriendNumberByPublicKey(publicKeyHex);
-          if (friendNumber != null &&
-              bindings.friendDelete(currentTox, friendNumber)) {
-            mainSendPort.send(
-              ToxFriendRemovedEvent(
-                  friendNumber: friendNumber, publicKeyHex: publicKeyHex),
-            );
+          // Sempre avisa a UI, mesmo se essa chave já não for mais amigo de
+          // verdade no toxcore (ex: contato "fantasma" sobrando no banco
+          // local de uma identidade anterior) — sem isso, o contato nunca
+          // sai da lista, já que é esse evento que aciona
+          // repository.delete() do lado da UI.
+          if (friendNumber != null) {
+            bindings.friendDelete(currentTox, friendNumber);
             unawaited(persistSavedata());
           }
+          mainSendPort.send(
+            ToxFriendRemovedEvent(
+                friendNumber: friendNumber ?? -1, publicKeyHex: publicKeyHex),
+          );
 
         case SendMessageCommand(:final publicKeyHex, :final message):
           final currentTox = tox;
@@ -860,6 +915,7 @@ class ToxIsolateManager {
                 publicKeyHex: publicKeyHex,
                 message: message,
                 errorMessage: e.toString(),
+                notConnected: e is ToxFriendNotConnectedException,
               ),
             );
           }
@@ -983,7 +1039,25 @@ class ToxIsolateManager {
           bindings.setSelfName(currentTox, name);
           bindings.setSelfStatusMessage(currentTox, statusMessage);
           mainSendPort.send(
-              ToxSelfProfileEvent(name: name, statusMessage: statusMessage));
+            ToxSelfProfileEvent(
+              name: name,
+              statusMessage: statusMessage,
+              userStatus: bindings.getSelfUserStatus(currentTox),
+            ),
+          );
+          unawaited(persistSavedata());
+
+        case SetUserStatusCommand(:final userStatus):
+          final currentTox = tox;
+          if (currentTox == null) return;
+          bindings.setSelfUserStatus(currentTox, userStatus);
+          mainSendPort.send(
+            ToxSelfProfileEvent(
+              name: bindings.getSelfName(currentTox),
+              statusMessage: bindings.getSelfStatusMessage(currentTox),
+              userStatus: userStatus,
+            ),
+          );
           unawaited(persistSavedata());
 
         case FlushSavedataCommand():
@@ -1172,6 +1246,12 @@ class ToxIsolateManager {
           _onFriendStatusMessageNative,
         ),
       );
+      bindings.setFriendUserStatusCallback(
+        currentTox,
+        ffi.Pointer.fromFunction<ToxFriendUserStatusCallbackNative>(
+          _onFriendUserStatusNative,
+        ),
+      );
       bindings.setGroupInviteCallback(
         currentTox,
         ffi.Pointer.fromFunction<ToxGroupInviteCallbackNative>(
@@ -1222,6 +1302,7 @@ class ToxIsolateManager {
         ToxSelfProfileEvent(
           name: bindings.getSelfName(currentTox),
           statusMessage: bindings.getSelfStatusMessage(currentTox),
+          userStatus: bindings.getSelfUserStatus(currentTox),
         ),
       );
 
@@ -1246,6 +1327,7 @@ class ToxIsolateManager {
             name: bindings.friendGetName(currentTox, friendNumber),
             statusMessage:
                 bindings.friendGetStatusMessage(currentTox, friendNumber),
+            userStatus: bindings.friendGetUserStatus(currentTox, friendNumber),
           ),
         );
       }

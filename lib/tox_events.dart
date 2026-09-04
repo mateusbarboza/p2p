@@ -34,12 +34,19 @@ class ToxSelfStatusEvent extends ToxNetworkEvent {
 
 /// Nome e mensagem de status do próprio perfil — enviado no boot (lendo o
 /// que já estava salvo no savedata) e de novo sempre que SetProfileCommand
-/// é aplicado com sucesso.
+/// é aplicado com sucesso. [userStatus] é o presença escolhido manualmente
+/// (Online/Ausente/Ocupado — ver kToxUserStatus* em tox_bindings.dart),
+/// diferente da conectividade de rede em [ToxSelfStatusEvent].
 class ToxSelfProfileEvent extends ToxNetworkEvent {
-  const ToxSelfProfileEvent({required this.name, required this.statusMessage});
+  const ToxSelfProfileEvent({
+    required this.name,
+    required this.statusMessage,
+    required this.userStatus,
+  });
 
   final String name;
   final String statusMessage;
+  final int userStatus;
 }
 
 /// Nome/status de um amigo (o que ELE definiu no perfil dele) — enviado no
@@ -50,11 +57,16 @@ class ToxFriendProfileEvent extends ToxNetworkEvent {
     required this.publicKeyHex,
     required this.name,
     required this.statusMessage,
+    required this.userStatus,
   });
 
   final String publicKeyHex;
   final String name;
   final String statusMessage;
+
+  /// Presença que ELE escolheu (Online/Ausente/Ocupado — kToxUserStatus*),
+  /// diferente da conectividade de rede ([ToxFriendConnectionEvent]).
+  final int userStatus;
 }
 
 /// Confirma que o savedata foi gravado no disco após um
@@ -133,12 +145,14 @@ class ToxMessageSentEvent extends ToxNetworkEvent {
     required this.toxMessageId,
     required this.sentAt,
   })  : success = true,
-        errorMessage = null;
+        errorMessage = null,
+        notConnected = false;
 
   const ToxMessageSentEvent.failure({
     required this.publicKeyHex,
     required this.message,
     required this.errorMessage,
+    this.notConnected = false,
   })  : success = false,
         toxMessageId = null,
         sentAt = null;
@@ -149,6 +163,12 @@ class ToxMessageSentEvent extends ToxNetworkEvent {
   final int? toxMessageId;
   final DateTime? sentAt;
   final String? errorMessage;
+
+  /// `true` quando a falha foi especificamente por o contato estar offline
+  /// no momento do envio (`TOX_ERR_FRIEND_SEND_MESSAGE_FRIEND_NOT_CONNECTED`)
+  /// — nesse caso a mensagem já foi salva como pendente e será reenviada
+  /// sozinha quando ele conectar, então a UI não deve tratar como erro real.
+  final bool notConnected;
 }
 
 /// Uma mensagem enviada por nós foi confirmada como entregue ao amigo.
@@ -440,6 +460,13 @@ class SetProfileCommand extends ToxNetworkCommand {
 
   final String name;
   final String statusMessage;
+}
+
+/// Muda o status de presença (Online/Ausente/Ocupado — ver kToxUserStatus*
+/// em tox_bindings.dart), separado do nome/descrição de [SetProfileCommand].
+class SetUserStatusCommand extends ToxNetworkCommand {
+  const SetUserStatusCommand({required this.userStatus});
+  final int userStatus;
 }
 
 /// Pede para o isolate gravar o savedata no disco imediatamente, em vez de

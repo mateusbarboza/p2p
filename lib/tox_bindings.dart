@@ -569,6 +569,74 @@ typedef _ToxCallbackFileRecvControlDart = void Function(
   ffi.Pointer<ffi.NativeFunction<ToxFileRecvControlCallbackNative>> callback,
 );
 
+/// Valores do enum `TOX_USER_STATUS` — status de presença que o usuário
+/// escolhe manualmente (diferente de `ToxConnection`, que é a conectividade
+/// de rede). Mostrado como "Online"/"Ausente"/"Ocupado" na UI.
+const int kToxUserStatusNone = 0; // "Online" (disponível)
+const int kToxUserStatusAway = 1;
+const int kToxUserStatusBusy = 2;
+
+/// Valor de `TOX_ERR_FRIEND_SEND_MESSAGE_FRIEND_NOT_CONNECTED` — usado por
+/// [ToxBindings.friendSendMessage] para distinguir "amigo offline agora"
+/// (mensagem deve ser enfileirada e reenviada depois) de qualquer outro
+/// erro real de envio.
+const int kToxErrFriendSendMessageFriendNotConnected = 3;
+
+/// Lançada por [ToxBindings.friendSendMessage] quando o amigo não está
+/// conectado no momento do envio — não é um erro real, apenas sinaliza que
+/// a mensagem deve ser guardada como pendente e reenviada quando ele
+/// conectar (ver `SendMessageCommand` em tox_isolate_manager.dart).
+class ToxFriendNotConnectedException implements Exception {
+  const ToxFriendNotConnectedException();
+
+  @override
+  String toString() => 'Contato está offline no momento.';
+}
+
+// void tox_self_set_status(Tox *tox, Tox_User_Status status);
+typedef _ToxSelfSetStatusNative = ffi.Void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Int32 status,
+);
+typedef _ToxSelfSetStatusDart = void Function(
+  ffi.Pointer<ffi.Void> tox,
+  int status,
+);
+
+// Tox_User_Status tox_self_get_status(const Tox *tox);
+typedef _ToxSelfGetStatusNative = ffi.Int32 Function(ffi.Pointer<ffi.Void> tox);
+typedef _ToxSelfGetStatusDart = int Function(ffi.Pointer<ffi.Void> tox);
+
+// Tox_User_Status tox_friend_get_status(const Tox *tox, uint32_t friend_number, Tox_Err_Friend_Query *error);
+typedef _ToxFriendGetUserStatusNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Uint32 friendNumber,
+  ffi.Pointer<ffi.Int32> error,
+);
+typedef _ToxFriendGetUserStatusDart = int Function(
+  ffi.Pointer<ffi.Void> tox,
+  int friendNumber,
+  ffi.Pointer<ffi.Int32> error,
+);
+
+// typedef void tox_friend_status_cb(Tox *tox, uint32_t friend_number, Tox_User_Status status, void *user_data);
+typedef ToxFriendUserStatusCallbackNative = ffi.Void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Uint32 friendNumber,
+  ffi.Int32 status,
+  ffi.Pointer<ffi.Void> userData,
+);
+
+// void tox_callback_friend_status(Tox *tox, tox_friend_status_cb *callback);
+typedef _ToxCallbackFriendUserStatusNative = ffi.Void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Pointer<ffi.NativeFunction<ToxFriendUserStatusCallbackNative>> callback,
+);
+typedef _ToxCallbackFriendUserStatusDart = void Function(
+  ffi.Pointer<ffi.Void> tox,
+  ffi.Pointer<ffi.NativeFunction<ToxFriendUserStatusCallbackNative>> callback,
+);
+
 // bool tox_self_set_name(Tox *tox, const uint8_t name[], size_t length, Tox_Err_Set_Info *error);
 typedef _ToxSelfSetNameNative = ffi.Uint8 Function(
   ffi.Pointer<ffi.Void> tox,
@@ -1145,6 +1213,8 @@ class ToxCoreBindings {
   late final _ToxCallbackFileRecvChunkDart _toxCallbackFileRecvChunk;
   late final _ToxCallbackFileChunkRequestDart _toxCallbackFileChunkRequest;
   late final _ToxCallbackFileRecvControlDart _toxCallbackFileRecvControl;
+  late final _ToxSelfSetStatusDart _toxSelfSetStatus;
+  late final _ToxSelfGetStatusDart _toxSelfGetStatus;
   late final _ToxSelfSetNameDart _toxSelfSetName;
   late final _ToxSelfGetNameSizeDart _toxSelfGetNameSize;
   late final _ToxSelfGetNameDart _toxSelfGetName;
@@ -1155,6 +1225,8 @@ class ToxCoreBindings {
   late final _ToxFriendGetNameDart _toxFriendGetName;
   late final _ToxFriendGetStatusMessageSizeDart _toxFriendGetStatusMessageSize;
   late final _ToxFriendGetStatusMessageDart _toxFriendGetStatusMessage;
+  late final _ToxFriendGetUserStatusDart _toxFriendGetUserStatus;
+  late final _ToxCallbackFriendUserStatusDart _toxCallbackFriendUserStatus;
   late final _ToxCallbackFriendNameDart _toxCallbackFriendName;
   late final _ToxCallbackFriendStatusMessageDart
       _toxCallbackFriendStatusMessage;
@@ -1302,6 +1374,12 @@ class ToxCoreBindings {
     _toxCallbackFileRecvControl = _lib.lookupFunction<
         _ToxCallbackFileRecvControlNative,
         _ToxCallbackFileRecvControlDart>('tox_callback_file_recv_control');
+    _toxSelfSetStatus =
+        _lib.lookupFunction<_ToxSelfSetStatusNative, _ToxSelfSetStatusDart>(
+            'tox_self_set_status');
+    _toxSelfGetStatus =
+        _lib.lookupFunction<_ToxSelfGetStatusNative, _ToxSelfGetStatusDart>(
+            'tox_self_get_status');
     _toxSelfSetName =
         _lib.lookupFunction<_ToxSelfSetNameNative, _ToxSelfSetNameDart>(
             'tox_self_set_name');
@@ -1332,6 +1410,11 @@ class ToxCoreBindings {
     _toxFriendGetStatusMessage = _lib.lookupFunction<
         _ToxFriendGetStatusMessageNative,
         _ToxFriendGetStatusMessageDart>('tox_friend_get_status_message');
+    _toxFriendGetUserStatus = _lib.lookupFunction<_ToxFriendGetUserStatusNative,
+        _ToxFriendGetUserStatusDart>('tox_friend_get_status');
+    _toxCallbackFriendUserStatus = _lib.lookupFunction<
+        _ToxCallbackFriendUserStatusNative,
+        _ToxCallbackFriendUserStatusDart>('tox_callback_friend_status');
     _toxCallbackFriendName = _lib.lookupFunction<_ToxCallbackFriendNameNative,
         _ToxCallbackFriendNameDart>('tox_callback_friend_name');
     _toxCallbackFriendStatusMessage = _lib.lookupFunction<
@@ -1643,8 +1726,9 @@ class ToxCoreBindings {
 
   /// Envia uma mensagem de texto normal para um amigo já conectado.
   /// Retorna o `message_id` (local, usado para casar com o read receipt).
-  /// Lança [StateError] em caso de erro (`TOX_ERR_FRIEND_SEND_MESSAGE`),
-  /// por exemplo se o amigo não estiver online no momento.
+  /// Lança [ToxFriendNotConnectedException] se o amigo não estiver online
+  /// no momento (`TOX_ERR_FRIEND_SEND_MESSAGE_FRIEND_NOT_CONNECTED`), ou
+  /// [StateError] para qualquer outro erro (`TOX_ERR_FRIEND_SEND_MESSAGE`).
   int friendSendMessage(
       ffi.Pointer<ffi.Void> tox, int friendNumber, String message) {
     final messageBytes = utf8.encode(message);
@@ -1664,6 +1748,9 @@ class ToxCoreBindings {
         errorPtr,
       );
       final errorCode = errorPtr.value;
+      if (errorCode == kToxErrFriendSendMessageFriendNotConnected) {
+        throw const ToxFriendNotConnectedException();
+      }
       if (errorCode != 0) {
         throw StateError(
           'tox_friend_send_message falhou com TOX_ERR_FRIEND_SEND_MESSAGE = $errorCode',
@@ -1799,6 +1886,18 @@ class ToxCoreBindings {
     _toxCallbackFileRecvControl(tox, callback);
   }
 
+  /// Define o status de presença escolhido manualmente pelo usuário
+  /// (Online/Ausente/Ocupado — ver kToxUserStatus*) — diferente da
+  /// conectividade de rede ([ToxConnection]). Propagado automaticamente
+  /// pelo toxcore aos contatos, e persistido no savedata.
+  void setSelfUserStatus(ffi.Pointer<ffi.Void> tox, int status) {
+    _toxSelfSetStatus(tox, status);
+  }
+
+  int getSelfUserStatus(ffi.Pointer<ffi.Void> tox) {
+    return _toxSelfGetStatus(tox);
+  }
+
   /// Define o nome exibido para os contatos (propagado automaticamente
   /// pelo toxcore a cada amigo conectado).
   void setSelfName(ffi.Pointer<ffi.Void> tox, String name) {
@@ -1887,6 +1986,24 @@ class ToxCoreBindings {
     } finally {
       pkg_ffi.calloc.free(errorPtr);
     }
+  }
+
+  /// Status de presença atual de um amigo (Online/Ausente/Ocupado — ver
+  /// kToxUserStatus* — diferente da conectividade de rede).
+  int friendGetUserStatus(ffi.Pointer<ffi.Void> tox, int friendNumber) {
+    final errorPtr = pkg_ffi.calloc<ffi.Int32>();
+    try {
+      return _toxFriendGetUserStatus(tox, friendNumber, errorPtr);
+    } finally {
+      pkg_ffi.calloc.free(errorPtr);
+    }
+  }
+
+  void setFriendUserStatusCallback(
+    ffi.Pointer<ffi.Void> tox,
+    ffi.Pointer<ffi.NativeFunction<ToxFriendUserStatusCallbackNative>> callback,
+  ) {
+    _toxCallbackFriendUserStatus(tox, callback);
   }
 
   void setFriendNameCallback(

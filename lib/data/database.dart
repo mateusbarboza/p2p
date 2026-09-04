@@ -42,6 +42,16 @@ class Messages extends Table {
   /// por nós) — usado para casar com o read receipt e marcar [delivered].
   IntColumn get toxMessageId => integer().nullable()();
   BoolColumn get delivered => boolean().withDefault(const Constant(false))();
+
+  /// Mensagem enviada por nós enquanto o contato estava offline: já salva
+  /// na timeline, mas ainda sem `toxMessageId` — [MessagesSyncNotifier]
+  /// reenvia sozinho assim que o contato conectar de novo.
+  BoolColumn get pending => boolean().withDefault(const Constant(false))();
+
+  /// Só faz sentido para mensagens recebidas (`outgoing: false`) — `true`
+  /// assim que a conversa é aberta. Mensagens enviadas por nós nascem já
+  /// `true` (não existe "não lida" para o que a própria pessoa escreveu).
+  BoolColumn get read => boolean().withDefault(const Constant(true))();
 }
 
 /// Transferências de arquivo com um contato. `toxFileNumber` é efêmero
@@ -137,7 +147,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
   @override
-  int get schemaVersion => 6;
+  int get schemaVersion => 8;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -158,6 +168,12 @@ class AppDatabase extends _$AppDatabase {
           }
           if (from < 6) {
             await m.createTable(groupInvitedContacts);
+          }
+          if (from < 7) {
+            await m.addColumn(messages, messages.pending);
+          }
+          if (from < 8) {
+            await m.addColumn(messages, messages.read);
           }
         },
       );

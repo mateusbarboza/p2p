@@ -327,6 +327,25 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
       defaultConstraints:
           GeneratedColumn.constraintIsAlways('CHECK ("delivered" IN (0, 1))'),
       defaultValue: const Constant(false));
+  static const VerificationMeta _pendingMeta =
+      const VerificationMeta('pending');
+  @override
+  late final GeneratedColumn<bool> pending = GeneratedColumn<bool>(
+      'pending', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("pending" IN (0, 1))'),
+      defaultValue: const Constant(false));
+  static const VerificationMeta _readMeta = const VerificationMeta('read');
+  @override
+  late final GeneratedColumn<bool> read = GeneratedColumn<bool>(
+      'read', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("read" IN (0, 1))'),
+      defaultValue: const Constant(true));
   @override
   List<GeneratedColumn> get $columns => [
         id,
@@ -335,7 +354,9 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
         body,
         timestamp,
         toxMessageId,
-        delivered
+        delivered,
+        pending,
+        read
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -384,6 +405,14 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
       context.handle(_deliveredMeta,
           delivered.isAcceptableOrUnknown(data['delivered']!, _deliveredMeta));
     }
+    if (data.containsKey('pending')) {
+      context.handle(_pendingMeta,
+          pending.isAcceptableOrUnknown(data['pending']!, _pendingMeta));
+    }
+    if (data.containsKey('read')) {
+      context.handle(
+          _readMeta, read.isAcceptableOrUnknown(data['read']!, _readMeta));
+    }
     return context;
   }
 
@@ -408,6 +437,10 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
           .read(DriftSqlType.int, data['${effectivePrefix}tox_message_id']),
       delivered: attachedDatabase.typeMapping
           .read(DriftSqlType.bool, data['${effectivePrefix}delivered'])!,
+      pending: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}pending'])!,
+      read: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}read'])!,
     );
   }
 
@@ -428,6 +461,16 @@ class Message extends DataClass implements Insertable<Message> {
   /// por nós) — usado para casar com o read receipt e marcar [delivered].
   final int? toxMessageId;
   final bool delivered;
+
+  /// Mensagem enviada por nós enquanto o contato estava offline: já salva
+  /// na timeline, mas ainda sem `toxMessageId` — [MessagesSyncNotifier]
+  /// reenvia sozinho assim que o contato conectar de novo.
+  final bool pending;
+
+  /// Só faz sentido para mensagens recebidas (`outgoing: false`) — `true`
+  /// assim que a conversa é aberta. Mensagens enviadas por nós nascem já
+  /// `true` (não existe "não lida" para o que a própria pessoa escreveu).
+  final bool read;
   const Message(
       {required this.id,
       required this.contactPublicKeyHex,
@@ -435,7 +478,9 @@ class Message extends DataClass implements Insertable<Message> {
       required this.body,
       required this.timestamp,
       this.toxMessageId,
-      required this.delivered});
+      required this.delivered,
+      required this.pending,
+      required this.read});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -448,6 +493,8 @@ class Message extends DataClass implements Insertable<Message> {
       map['tox_message_id'] = Variable<int>(toxMessageId);
     }
     map['delivered'] = Variable<bool>(delivered);
+    map['pending'] = Variable<bool>(pending);
+    map['read'] = Variable<bool>(read);
     return map;
   }
 
@@ -462,6 +509,8 @@ class Message extends DataClass implements Insertable<Message> {
           ? const Value.absent()
           : Value(toxMessageId),
       delivered: Value(delivered),
+      pending: Value(pending),
+      read: Value(read),
     );
   }
 
@@ -477,6 +526,8 @@ class Message extends DataClass implements Insertable<Message> {
       timestamp: serializer.fromJson<DateTime>(json['timestamp']),
       toxMessageId: serializer.fromJson<int?>(json['toxMessageId']),
       delivered: serializer.fromJson<bool>(json['delivered']),
+      pending: serializer.fromJson<bool>(json['pending']),
+      read: serializer.fromJson<bool>(json['read']),
     );
   }
   @override
@@ -490,6 +541,8 @@ class Message extends DataClass implements Insertable<Message> {
       'timestamp': serializer.toJson<DateTime>(timestamp),
       'toxMessageId': serializer.toJson<int?>(toxMessageId),
       'delivered': serializer.toJson<bool>(delivered),
+      'pending': serializer.toJson<bool>(pending),
+      'read': serializer.toJson<bool>(read),
     };
   }
 
@@ -500,7 +553,9 @@ class Message extends DataClass implements Insertable<Message> {
           String? body,
           DateTime? timestamp,
           Value<int?> toxMessageId = const Value.absent(),
-          bool? delivered}) =>
+          bool? delivered,
+          bool? pending,
+          bool? read}) =>
       Message(
         id: id ?? this.id,
         contactPublicKeyHex: contactPublicKeyHex ?? this.contactPublicKeyHex,
@@ -510,6 +565,8 @@ class Message extends DataClass implements Insertable<Message> {
         toxMessageId:
             toxMessageId.present ? toxMessageId.value : this.toxMessageId,
         delivered: delivered ?? this.delivered,
+        pending: pending ?? this.pending,
+        read: read ?? this.read,
       );
   Message copyWithCompanion(MessagesCompanion data) {
     return Message(
@@ -524,6 +581,8 @@ class Message extends DataClass implements Insertable<Message> {
           ? data.toxMessageId.value
           : this.toxMessageId,
       delivered: data.delivered.present ? data.delivered.value : this.delivered,
+      pending: data.pending.present ? data.pending.value : this.pending,
+      read: data.read.present ? data.read.value : this.read,
     );
   }
 
@@ -536,14 +595,16 @@ class Message extends DataClass implements Insertable<Message> {
           ..write('body: $body, ')
           ..write('timestamp: $timestamp, ')
           ..write('toxMessageId: $toxMessageId, ')
-          ..write('delivered: $delivered')
+          ..write('delivered: $delivered, ')
+          ..write('pending: $pending, ')
+          ..write('read: $read')
           ..write(')'))
         .toString();
   }
 
   @override
   int get hashCode => Object.hash(id, contactPublicKeyHex, outgoing, body,
-      timestamp, toxMessageId, delivered);
+      timestamp, toxMessageId, delivered, pending, read);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -554,7 +615,9 @@ class Message extends DataClass implements Insertable<Message> {
           other.body == this.body &&
           other.timestamp == this.timestamp &&
           other.toxMessageId == this.toxMessageId &&
-          other.delivered == this.delivered);
+          other.delivered == this.delivered &&
+          other.pending == this.pending &&
+          other.read == this.read);
 }
 
 class MessagesCompanion extends UpdateCompanion<Message> {
@@ -565,6 +628,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
   final Value<DateTime> timestamp;
   final Value<int?> toxMessageId;
   final Value<bool> delivered;
+  final Value<bool> pending;
+  final Value<bool> read;
   const MessagesCompanion({
     this.id = const Value.absent(),
     this.contactPublicKeyHex = const Value.absent(),
@@ -573,6 +638,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     this.timestamp = const Value.absent(),
     this.toxMessageId = const Value.absent(),
     this.delivered = const Value.absent(),
+    this.pending = const Value.absent(),
+    this.read = const Value.absent(),
   });
   MessagesCompanion.insert({
     this.id = const Value.absent(),
@@ -582,6 +649,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     this.timestamp = const Value.absent(),
     this.toxMessageId = const Value.absent(),
     this.delivered = const Value.absent(),
+    this.pending = const Value.absent(),
+    this.read = const Value.absent(),
   })  : contactPublicKeyHex = Value(contactPublicKeyHex),
         outgoing = Value(outgoing),
         body = Value(body);
@@ -593,6 +662,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     Expression<DateTime>? timestamp,
     Expression<int>? toxMessageId,
     Expression<bool>? delivered,
+    Expression<bool>? pending,
+    Expression<bool>? read,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -603,6 +674,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
       if (timestamp != null) 'timestamp': timestamp,
       if (toxMessageId != null) 'tox_message_id': toxMessageId,
       if (delivered != null) 'delivered': delivered,
+      if (pending != null) 'pending': pending,
+      if (read != null) 'read': read,
     });
   }
 
@@ -613,7 +686,9 @@ class MessagesCompanion extends UpdateCompanion<Message> {
       Value<String>? body,
       Value<DateTime>? timestamp,
       Value<int?>? toxMessageId,
-      Value<bool>? delivered}) {
+      Value<bool>? delivered,
+      Value<bool>? pending,
+      Value<bool>? read}) {
     return MessagesCompanion(
       id: id ?? this.id,
       contactPublicKeyHex: contactPublicKeyHex ?? this.contactPublicKeyHex,
@@ -622,6 +697,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
       timestamp: timestamp ?? this.timestamp,
       toxMessageId: toxMessageId ?? this.toxMessageId,
       delivered: delivered ?? this.delivered,
+      pending: pending ?? this.pending,
+      read: read ?? this.read,
     );
   }
 
@@ -650,6 +727,12 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     if (delivered.present) {
       map['delivered'] = Variable<bool>(delivered.value);
     }
+    if (pending.present) {
+      map['pending'] = Variable<bool>(pending.value);
+    }
+    if (read.present) {
+      map['read'] = Variable<bool>(read.value);
+    }
     return map;
   }
 
@@ -662,7 +745,9 @@ class MessagesCompanion extends UpdateCompanion<Message> {
           ..write('body: $body, ')
           ..write('timestamp: $timestamp, ')
           ..write('toxMessageId: $toxMessageId, ')
-          ..write('delivered: $delivered')
+          ..write('delivered: $delivered, ')
+          ..write('pending: $pending, ')
+          ..write('read: $read')
           ..write(')'))
         .toString();
   }
@@ -2489,6 +2574,8 @@ typedef $$MessagesTableCreateCompanionBuilder = MessagesCompanion Function({
   Value<DateTime> timestamp,
   Value<int?> toxMessageId,
   Value<bool> delivered,
+  Value<bool> pending,
+  Value<bool> read,
 });
 typedef $$MessagesTableUpdateCompanionBuilder = MessagesCompanion Function({
   Value<int> id,
@@ -2498,6 +2585,8 @@ typedef $$MessagesTableUpdateCompanionBuilder = MessagesCompanion Function({
   Value<DateTime> timestamp,
   Value<int?> toxMessageId,
   Value<bool> delivered,
+  Value<bool> pending,
+  Value<bool> read,
 });
 
 class $$MessagesTableFilterComposer
@@ -2530,6 +2619,12 @@ class $$MessagesTableFilterComposer
 
   ColumnFilters<bool> get delivered => $composableBuilder(
       column: $table.delivered, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get pending => $composableBuilder(
+      column: $table.pending, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get read => $composableBuilder(
+      column: $table.read, builder: (column) => ColumnFilters(column));
 }
 
 class $$MessagesTableOrderingComposer
@@ -2563,6 +2658,12 @@ class $$MessagesTableOrderingComposer
 
   ColumnOrderings<bool> get delivered => $composableBuilder(
       column: $table.delivered, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get pending => $composableBuilder(
+      column: $table.pending, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get read => $composableBuilder(
+      column: $table.read, builder: (column) => ColumnOrderings(column));
 }
 
 class $$MessagesTableAnnotationComposer
@@ -2594,6 +2695,12 @@ class $$MessagesTableAnnotationComposer
 
   GeneratedColumn<bool> get delivered =>
       $composableBuilder(column: $table.delivered, builder: (column) => column);
+
+  GeneratedColumn<bool> get pending =>
+      $composableBuilder(column: $table.pending, builder: (column) => column);
+
+  GeneratedColumn<bool> get read =>
+      $composableBuilder(column: $table.read, builder: (column) => column);
 }
 
 class $$MessagesTableTableManager extends RootTableManager<
@@ -2626,6 +2733,8 @@ class $$MessagesTableTableManager extends RootTableManager<
             Value<DateTime> timestamp = const Value.absent(),
             Value<int?> toxMessageId = const Value.absent(),
             Value<bool> delivered = const Value.absent(),
+            Value<bool> pending = const Value.absent(),
+            Value<bool> read = const Value.absent(),
           }) =>
               MessagesCompanion(
             id: id,
@@ -2635,6 +2744,8 @@ class $$MessagesTableTableManager extends RootTableManager<
             timestamp: timestamp,
             toxMessageId: toxMessageId,
             delivered: delivered,
+            pending: pending,
+            read: read,
           ),
           createCompanionCallback: ({
             Value<int> id = const Value.absent(),
@@ -2644,6 +2755,8 @@ class $$MessagesTableTableManager extends RootTableManager<
             Value<DateTime> timestamp = const Value.absent(),
             Value<int?> toxMessageId = const Value.absent(),
             Value<bool> delivered = const Value.absent(),
+            Value<bool> pending = const Value.absent(),
+            Value<bool> read = const Value.absent(),
           }) =>
               MessagesCompanion.insert(
             id: id,
@@ -2653,6 +2766,8 @@ class $$MessagesTableTableManager extends RootTableManager<
             timestamp: timestamp,
             toxMessageId: toxMessageId,
             delivered: delivered,
+            pending: pending,
+            read: read,
           ),
           withReferenceMapper: (p0) => p0
               .map((e) => (

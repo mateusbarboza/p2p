@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'data/database.dart' show GroupMessage;
+import 'date_divider.dart';
 import 'providers/contacts_provider.dart' show ContactViewModel;
 import 'providers/group_messages_provider.dart';
 import 'providers/groups_provider.dart';
@@ -230,8 +231,18 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
     return ListView.builder(
       padding: const EdgeInsets.all(12),
       itemCount: messages.length,
-      itemBuilder: (context, index) =>
-          _GroupMessageBubble(message: messages[index]),
+      itemBuilder: (context, index) {
+        final message = messages[index];
+        final showDateDivider = index == 0 ||
+            !isSameDay(messages[index - 1].timestamp, message.timestamp);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (showDateDivider) DateDivider(date: message.timestamp),
+            _GroupMessageBubble(message: message),
+          ],
+        );
+      },
     );
   }
 }

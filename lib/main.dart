@@ -17,22 +17,28 @@
 // e persiste o que precisa persistir (ver contacts_provider.dart). A UI só
 // observa esses providers e manda comandos de volta pelo ToxIsolateManager.
 
+import 'dart:async' show unawaited;
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:local_notifier/local_notifier.dart';
 
 import 'chat_screen.dart';
 import 'group_chat_screen.dart';
 import 'identity_backup.dart';
+import 'local_auth_screen.dart';
 import 'onboarding_screen.dart';
 import 'profile_screen.dart';
 import 'providers/contacts_provider.dart';
+import 'providers/database_provider.dart';
 import 'providers/file_transfers_provider.dart';
 import 'providers/group_messages_provider.dart';
 import 'providers/groups_provider.dart';
+import 'providers/local_auth_provider.dart';
 import 'providers/messages_provider.dart';
+import 'providers/notifications_provider.dart';
 import 'providers/pending_group_invites_provider.dart';
 import 'providers/pending_requests_provider.dart';
 import 'providers/self_profile_provider.dart';
@@ -44,7 +50,11 @@ import 'tox_bindings.dart';
 import 'tox_events.dart';
 import 'welcome_choice_screen.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Notificação nativa do Windows exige um atalho com AppUserModelID válido
+  // — o próprio plugin cria esse atalho no menu iniciar se ainda não existir.
+  await localNotifier.setup(appName: 'Talksnap');
   runApp(const ProviderScope(child: TalksnapApp()));
 }
 
@@ -89,14 +99,84 @@ class TalksnapApp extends ConsumerWidget {
 /// Também é aqui que os Notifiers "globais" (mensagens, arquivos, perfil)
 /// são ativados pela primeira vez — mas só depois de decidido que é seguro
 /// deixar o isolate de rede subir (ver [_startNetworking]).
-class AppRoot extends ConsumerStatefulWidget {
+class AppRoot extends ConsumerWidget {
   const AppRoot({super.key});
 
   @override
-  ConsumerState<AppRoot> createState() => _AppRootState();
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Trava local de usuário/senha: portão mais externo de todos — não tem
+    // relação com a identidade Tox, só protege o app neste dispositivo.
+    final localAuth = ref.watch(localAuthProvider);
+    if (localAuth.checking) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    final activeAccount = localAuth.activeAccount;
+    if (!localAuth.unlocked || activeAccount == null) {
+      return const LocalAuthScreen();
+    }
+
+    // Cada conta local tem sua própria identidade Talksnap (savedata,
+    // banco, isolate de rede) — trocar a `key` aqui derruba e recria todo
+    // esse ProviderScope (fechando o isolate/banco da conta anterior via
+    // os `ref.onDispose` já existentes) sempre que a conta ativa muda, sem
+    // precisar reiniciar o processo inteiro.
+    return ProviderScope(
+      key: ValueKey(activeAccount.slug),
+      // `onLogout` é um closure capturado deste `ref` (escopo raiz, fora do
+      // ProviderScope aninhado abaixo) — repassado explicitamente em vez de
+      // lido de novo lá dentro, porque um ProviderScope aninhado cria seu
+      // próprio container: ler localAuthProvider por lá pegaria uma
+      // instância separada, e o logout nunca chegaria a este notifier aqui.
+      child: _AccountSessionRoot(
+        currentUsername: activeAccount.username,
+        onLogout: () => ref.read(localAuthProvider.notifier).logout(),
+        onChangePassword: (currentPassword, newPassword) => ref
+            .read(localAuthProvider.notifier)
+            .changePassword(currentPassword, newPassword),
+        onRenameAccount: (newUsername) =>
+            ref.read(localAuthProvider.notifier).renameAccount(newUsername),
+        onDeleteAccountRecord: (password) =>
+            ref.read(localAuthProvider.notifier).deleteAccount(password),
+      ),
+    );
+  }
 }
 
-class _AppRootState extends ConsumerState<AppRoot> {
+/// Decide qual tela mostrar dentro de uma sessão de conta já destravada:
+///   - splash, enquanto ainda não sabemos se já existe um savedata no disco;
+///   - WelcomeChoiceScreen, se NENHUM savedata existe ainda — a única janela
+///     de oportunidade para importar um backup em vez de deixar o toxcore
+///     gerar uma identidade nova sozinho (ver welcome_choice_screen.dart);
+///   - splash de novo, enquanto o perfil já existente está sendo lido;
+///   - OnboardingScreen, se o nome ainda está vazio (identidade nova, sem
+///     backup importado);
+///   - HomeScreen, no dia a dia normal.
+class _AccountSessionRoot extends ConsumerStatefulWidget {
+  const _AccountSessionRoot({
+    required this.currentUsername,
+    required this.onLogout,
+    required this.onChangePassword,
+    required this.onRenameAccount,
+    required this.onDeleteAccountRecord,
+  });
+
+  final String currentUsername;
+  final VoidCallback onLogout;
+  final Future<bool> Function(String currentPassword, String newPassword)
+      onChangePassword;
+  final Future<void> Function(String newUsername) onRenameAccount;
+
+  /// Só apaga o REGISTRO local (usuário/senha) — verifica a senha e
+  /// retorna `false` se não bater. A limpeza de arquivos e o logout de
+  /// fato ficam por conta de [_AccountSessionRootState._deleteAccountAndCleanUp].
+  final Future<bool> Function(String password) onDeleteAccountRecord;
+
+  @override
+  ConsumerState<_AccountSessionRoot> createState() =>
+      _AccountSessionRootState();
+}
+
+class _AccountSessionRootState extends ConsumerState<_AccountSessionRoot> {
   bool _checkingIdentity = true;
   bool _networkingStarted = false;
 
@@ -147,6 +227,9 @@ class _AppRootState extends ConsumerState<AppRoot> {
     ref.read(groupsProvider);
     ref.read(groupMessagesSyncProvider);
     ref.read(pendingGroupInvitesProvider);
+    // Notificação nativa ao chegar mensagem — mesmo raciocínio de sempre:
+    // precisa estar ouvindo desde já, não só quando o chat estiver aberto.
+    ref.read(notificationsProvider);
     setState(() {});
   }
 
@@ -166,12 +249,94 @@ class _AppRootState extends ConsumerState<AppRoot> {
     if (selfProfile.name.isEmpty) {
       return const OnboardingScreen();
     }
-    return const HomeScreen();
+    return HomeScreen(
+      currentUsername: widget.currentUsername,
+      onLogout: _logoutAndStopNetworking,
+      onChangePassword: widget.onChangePassword,
+      onRenameAccount: widget.onRenameAccount,
+      onDeleteAccount: _deleteAccountAndCleanUp,
+    );
+  }
+
+  /// Para o isolate de rede DESTA conta e reseta TODOS os providers
+  /// específicos de conta antes de voltar pra tela de login.
+  ///
+  /// Dois problemas resolvidos aqui, os dois pela mesma causa: um provider
+  /// comum do Riverpod (`Provider`/`NotifierProvider` sem `overrides`)
+  /// sempre vive no container RAIZ — trocar a `key` do ProviderScope
+  /// aninhado (ver AppRoot) reseta o WIDGET (`_AccountSessionRoot` reinicia
+  /// `_checkingIdentity`/`_networkingStarted`), mas NÃO reseta esses
+  /// providers, que continuam apontando pra mesma instância antiga (mesma
+  /// conexão de banco, mesmo `ToxIsolateManager`) mesmo numa conta nova.
+  /// Por isso: (1) sem parar o isolate explicitamente aqui, duas instâncias
+  /// do toxcore concorreriam pelos mesmos recursos nativos; (2) sem
+  /// invalidar os outros providers, a conta nova reaproveitaria em silêncio
+  /// o banco/perfil/contatos da conta anterior, mesmo com savedata vazio.
+  void _logoutAndStopNetworking() {
+    unawaited(
+      ref.read(toxIsolateManagerProvider).stop().then((_) {
+        _invalidateAccountScopedProviders();
+        widget.onLogout();
+      }),
+    );
+  }
+
+  void _invalidateAccountScopedProviders() {
+    ref.invalidate(toxIsolateManagerProvider);
+    ref.invalidate(toxNetworkStartupProvider);
+    ref.invalidate(toxNetworkEventsProvider);
+    ref.invalidate(appDatabaseProvider);
+    ref.invalidate(contactsRepositoryProvider);
+    ref.invalidate(messagesRepositoryProvider);
+    ref.invalidate(fileTransfersRepositoryProvider);
+    ref.invalidate(groupsRepositoryProvider);
+    ref.invalidate(groupMessagesRepositoryProvider);
+    ref.invalidate(groupMembersRepositoryProvider);
+    ref.invalidate(groupInvitedContactsRepositoryProvider);
+    ref.invalidate(contactsProvider);
+    ref.invalidate(messagesSyncProvider);
+    ref.invalidate(fileTransfersSyncProvider);
+    ref.invalidate(selfProfileProvider);
+    ref.invalidate(selfStatusProvider);
+    ref.invalidate(pendingRequestsProvider);
+    ref.invalidate(groupsProvider);
+    ref.invalidate(groupMessagesSyncProvider);
+    ref.invalidate(pendingGroupInvitesProvider);
+    ref.invalidate(notificationsProvider);
+  }
+
+  /// Exclui a conta ativa: confere a senha, apaga os arquivos (savedata,
+  /// banco, avatar) ENQUANTO ainda são desta conta, e só então volta pra
+  /// tela de login. Retorna uma mensagem de erro (ex: senha incorreta) ou
+  /// `null` em caso de sucesso.
+  Future<String?> _deleteAccountAndCleanUp(String password) async {
+    final removed = await widget.onDeleteAccountRecord(password);
+    if (!removed) return 'Senha incorreta.';
+
+    await ref.read(toxIsolateManagerProvider).stop();
+    await deleteAccountFiles();
+    _invalidateAccountScopedProviders();
+    widget.onLogout();
+    return null;
   }
 }
 
 class HomeScreen extends ConsumerStatefulWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({
+    super.key,
+    required this.currentUsername,
+    required this.onLogout,
+    required this.onChangePassword,
+    required this.onRenameAccount,
+    required this.onDeleteAccount,
+  });
+
+  final String currentUsername;
+  final VoidCallback onLogout;
+  final Future<bool> Function(String currentPassword, String newPassword)
+      onChangePassword;
+  final Future<void> Function(String newUsername) onRenameAccount;
+  final Future<String?> Function(String password) onDeleteAccount;
 
   @override
   ConsumerState<HomeScreen> createState() => _HomeScreenState();
@@ -196,6 +361,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   GroupViewModel? _selectedGroup;
   bool _showTalksnapId = false;
   bool _showAddContactForm = false;
+  bool _showContactSearch = false;
 
   void _submitAddFriend() {
     final talksnapId = _talksnapIdController.text.trim().toUpperCase();
@@ -360,7 +526,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             icon: const Icon(Icons.person_outline),
             tooltip: 'Meu perfil',
             onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (context) => const ProfileScreen()),
+              MaterialPageRoute(
+                builder: (context) => ProfileScreen(
+                  currentUsername: widget.currentUsername,
+                  onLogout: widget.onLogout,
+                  onChangePassword: widget.onChangePassword,
+                  onRenameAccount: widget.onRenameAccount,
+                  onDeleteAccount: widget.onDeleteAccount,
+                ),
+              ),
             ),
           ),
         ],
@@ -407,9 +581,27 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    _StatusBadge(
-                      isOnline: isOnline,
-                      label: _connectionLabel(selfStatus.connection),
+                    PopupMenuButton<int>(
+                      tooltip: 'Mudar status',
+                      onSelected: (status) => ref
+                          .read(selfProfileProvider.notifier)
+                          .updateUserStatus(status),
+                      itemBuilder: (context) => const [
+                        PopupMenuItem(
+                            value: kToxUserStatusNone, child: Text('Online')),
+                        PopupMenuItem(
+                            value: kToxUserStatusAway, child: Text('Ausente')),
+                        PopupMenuItem(
+                            value: kToxUserStatusBusy, child: Text('Ocupado')),
+                      ],
+                      child: _StatusBadge(
+                        color: !isOnline
+                            ? Colors.orange
+                            : userStatusColor(selfProfile.userStatus),
+                        label: !isOnline
+                            ? _connectionLabel(selfStatus.connection)
+                            : userStatusLabel(selfProfile.userStatus),
+                      ),
                     ),
                   ],
                 ),
@@ -510,12 +702,34 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     ),
                 ],
                 const Divider(height: 40),
-                Text('Contatos (${contacts.length})',
-                    style: Theme.of(context).textTheme.titleMedium),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text('Contatos (${contacts.length})',
+                          style: Theme.of(context).textTheme.titleMedium),
+                    ),
+                    if (contacts.isNotEmpty)
+                      IconButton(
+                        icon: Icon(
+                          _showContactSearch ? Icons.search_off : Icons.search,
+                          size: 20,
+                        ),
+                        tooltip: 'Buscar contato',
+                        onPressed: () => setState(() {
+                          _showContactSearch = !_showContactSearch;
+                          if (!_showContactSearch) {
+                            _contactSearchController.clear();
+                            _contactSearchQuery = '';
+                          }
+                        }),
+                      ),
+                  ],
+                ),
                 const SizedBox(height: 8),
-                if (contacts.isNotEmpty) ...[
+                if (_showContactSearch && contacts.isNotEmpty) ...[
                   TextField(
                     controller: _contactSearchController,
+                    autofocus: true,
                     decoration: InputDecoration(
                       hintText: 'Buscar contato',
                       prefixIcon: const Icon(Icons.search, size: 20),
@@ -544,7 +758,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   for (final contact in filteredContacts)
                     _ContactTile(
                       contact: contact,
-                      connectionLabel: _connectionLabel(contact.connection),
+                      connectionLabel: contact.connection != ToxConnection.none
+                          ? userStatusLabel(contact.userStatus)
+                          : _connectionLabel(contact.connection),
                       selected: _selectedContact?.publicKeyHex ==
                           contact.publicKeyHex,
                       onTap: () => _openChat(contact),
@@ -678,11 +894,40 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 }
 
+/// Rótulo do status de presença (Online/Ausente/Ocupado) — função livre
+/// porque tanto o cabeçalho do próprio usuário (_HomeScreenState) quanto a
+/// listagem de contatos (_ContactTile) precisam dela.
+String userStatusLabel(int userStatus) {
+  switch (userStatus) {
+    case kToxUserStatusAway:
+      return 'Ausente';
+    case kToxUserStatusBusy:
+      return 'Ocupado';
+    case kToxUserStatusNone:
+    default:
+      return 'Online';
+  }
+}
+
+/// Cor do status de presença (verde/amarelo/vermelho) — mesmo raciocínio de
+/// [userStatusLabel].
+Color userStatusColor(int userStatus) {
+  switch (userStatus) {
+    case kToxUserStatusAway:
+      return Colors.amber;
+    case kToxUserStatusBusy:
+      return Colors.red;
+    case kToxUserStatusNone:
+    default:
+      return Colors.green;
+  }
+}
+
 /// Linha de contato com um botão de ações que só aparece ao passar o
 /// mouse por cima — mesmo padrão usado nas bolhas de mensagem/arquivo do
 /// chat (ver _HoverDeleteWrapper em chat_screen.dart), pra manter a lista
 /// limpa sem um ícone de remover sempre visível ao lado de cada contato.
-class _ContactTile extends StatefulWidget {
+class _ContactTile extends ConsumerStatefulWidget {
   const _ContactTile({
     required this.contact,
     required this.connectionLabel,
@@ -698,15 +943,17 @@ class _ContactTile extends StatefulWidget {
   final VoidCallback onRemove;
 
   @override
-  State<_ContactTile> createState() => _ContactTileState();
+  ConsumerState<_ContactTile> createState() => _ContactTileState();
 }
 
-class _ContactTileState extends State<_ContactTile> {
+class _ContactTileState extends ConsumerState<_ContactTile> {
   bool _hovering = false;
 
   @override
   Widget build(BuildContext context) {
     final contact = widget.contact;
+    final unreadCount =
+        ref.watch(unreadMessagesCountProvider(contact.publicKeyHex)).value ?? 0;
     return MouseRegion(
       onEnter: (_) => setState(() => _hovering = true),
       onExit: (_) => setState(() => _hovering = false),
@@ -720,14 +967,25 @@ class _ContactTileState extends State<_ContactTile> {
             Icons.circle,
             size: 12,
             color: contact.connection != ToxConnection.none
-                ? Colors.green
+                ? userStatusColor(contact.userStatus)
                 : Colors.grey,
           ),
-          title: Text(
-            contact.displayName,
-            style: contact.displayName == contact.publicKeyHex
-                ? const TextStyle(fontFamily: 'monospace', fontSize: 11)
-                : null,
+          title: Row(
+            children: [
+              Flexible(
+                child: Text(
+                  contact.displayName,
+                  overflow: TextOverflow.ellipsis,
+                  style: contact.displayName == contact.publicKeyHex
+                      ? const TextStyle(fontFamily: 'monospace', fontSize: 11)
+                      : null,
+                ),
+              ),
+              if (unreadCount > 0) ...[
+                const SizedBox(width: 6),
+                _UnreadBadge(count: unreadCount),
+              ],
+            ],
           ),
           subtitle: Text(
             contact.statusMessage?.isNotEmpty == true
@@ -752,6 +1010,35 @@ class _ContactTileState extends State<_ContactTile> {
                   )
                 : null,
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Círculo vermelho com o número de mensagens não lidas — mesmo padrão
+/// visual de badge de notificação usado em apps de mensagem.
+class _UnreadBadge extends StatelessWidget {
+  const _UnreadBadge({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      constraints: const BoxConstraints(minWidth: 20),
+      decoration: const BoxDecoration(
+        color: Colors.red,
+        borderRadius: BorderRadius.all(Radius.circular(10)),
+      ),
+      child: Text(
+        count > 99 ? '99+' : '$count',
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 11,
+          fontWeight: FontWeight.bold,
         ),
       ),
     );
@@ -829,9 +1116,9 @@ class _GroupTileState extends ConsumerState<_GroupTile> {
 }
 
 class _StatusBadge extends StatelessWidget {
-  const _StatusBadge({required this.isOnline, required this.label});
+  const _StatusBadge({required this.color, required this.label});
 
-  final bool isOnline;
+  final Color color;
   final String label;
 
   @override
@@ -839,8 +1126,7 @@ class _StatusBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
-        color:
-            (isOnline ? Colors.green : Colors.orange).withValues(alpha: 0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Row(
@@ -850,7 +1136,7 @@ class _StatusBadge extends StatelessWidget {
             width: 10,
             height: 10,
             decoration: BoxDecoration(
-              color: isOnline ? Colors.green : Colors.orange,
+              color: color,
               shape: BoxShape.circle,
             ),
           ),
