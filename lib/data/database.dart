@@ -69,6 +69,12 @@ class FileTransfers extends Table {
   TextColumn get status => textEnum<ToxFileTransferPhase>()();
   TextColumn get savedPath => text().nullable()();
   DateTimeColumn get timestamp => dateTime().withDefault(currentDateAndTime)();
+
+  /// Mesmo raciocínio de [Messages.read]: só relevante pra transferências
+  /// recebidas (`outgoing: false`) — as que nós mandamos nascem já `true`.
+  /// Sem isso, um áudio/arquivo recebido com a conversa fechada não contava
+  /// pro badge de não lidas na lista de contatos.
+  BoolColumn get read => boolean().withDefault(const Constant(true))();
 }
 
 /// Um grupo (chat NGC). A chave estável é [chatIdHex] (32 bytes, hex) —
@@ -164,7 +170,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
   @override
-  int get schemaVersion => 9;
+  int get schemaVersion => 10;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -194,6 +200,9 @@ class AppDatabase extends _$AppDatabase {
           }
           if (from < 9) {
             await m.createTable(callLogs);
+          }
+          if (from < 10) {
+            await m.addColumn(fileTransfers, fileTransfers.read);
           }
         },
       );

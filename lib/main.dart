@@ -1066,7 +1066,7 @@ class _ContactTileState extends ConsumerState<_ContactTile> {
   Widget build(BuildContext context) {
     final contact = widget.contact;
     final unreadCount =
-        ref.watch(unreadMessagesCountProvider(contact.publicKeyHex)).value ?? 0;
+        ref.watch(unreadMessagesCountProvider(contact.publicKeyHex));
     final callState = ref.watch(callProvider);
     final inCallWithContact = callState.status != CallStatus.idle &&
         callState.contactPublicKeyHex == contact.publicKeyHex;

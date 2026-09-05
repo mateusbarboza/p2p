@@ -20,6 +20,7 @@ import '../data/messages_repository.dart';
 import '../tox_bindings.dart' show ToxConnection;
 import '../tox_events.dart';
 import 'database_provider.dart';
+import 'file_transfers_provider.dart';
 import 'tox_events_provider.dart';
 import 'tox_manager_provider.dart';
 
@@ -170,11 +171,27 @@ final chatMessagesProvider =
   return ref.watch(messagesRepositoryProvider).watchForContact(publicKeyHex);
 });
 
-/// Quantas mensagens não lidas tem com um contato — mostrado como badge na
-/// listagem de contatos. `family` por contato, mesmo raciocínio de
-/// [chatMessagesProvider].
-final unreadMessagesCountProvider =
+/// Quantas mensagens de texto não lidas tem com um contato. Uso interno —
+/// [unreadMessagesCountProvider] é quem soma isso com arquivos/áudios não
+/// lidos (ver file_transfers_provider.dart) pro badge da lista de contatos.
+final _unreadTextMessagesCountProvider =
     StreamProvider.family<int, String>((ref, publicKeyHex) {
   ref.watch(messagesSyncProvider);
   return ref.watch(messagesRepositoryProvider).watchUnreadCount(publicKeyHex);
+});
+
+/// Total de itens não lidos (mensagens de texto + arquivos/áudios recebidos)
+/// com um contato — mostrado como badge na listagem de contatos. `family`
+/// por contato, mesmo raciocínio de [chatMessagesProvider]. Uma mensagem de
+/// voz recebida com a conversa fechada só conta aqui depois de completar o
+/// download (ver FileTransfersRepository.insert/watchUnreadCount).
+final unreadMessagesCountProvider = Provider.family<int, String>((
+  ref,
+  publicKeyHex,
+) {
+  final textCount =
+      ref.watch(_unreadTextMessagesCountProvider(publicKeyHex)).value ?? 0;
+  final fileCount =
+      ref.watch(fileTransfersUnreadCountProvider(publicKeyHex)).value ?? 0;
+  return textCount + fileCount;
 });

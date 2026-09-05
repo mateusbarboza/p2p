@@ -1194,17 +1194,31 @@ class ToxIsolateManager {
             // Precisa existir um arquivo de destino ANTES de mandar RESUME —
             // senão os primeiros chunks podem chegar sem ter onde ir.
             unawaited(() async {
-              final directory = await getApplicationSupportDirectory();
-              final attachmentsDir = Directory(
-                '${directory.path}${Platform.pathSeparator}attachments',
-              );
-              await attachmentsDir.create(recursive: true);
-              final destPath =
-                  '${attachmentsDir.path}${Platform.pathSeparator}${transfer.fileName}';
-              transfer.file = await File(destPath).open(mode: FileMode.write);
-              transfer.savedPath = destPath;
-              bindings.fileControl(
-                  currentTox, friendNumber, fileNumber, kToxFileControlResume);
+              try {
+                final directory = await getApplicationSupportDirectory();
+                final attachmentsDir = Directory(
+                  '${directory.path}${Platform.pathSeparator}attachments',
+                );
+                await attachmentsDir.create(recursive: true);
+                final destPath =
+                    '${attachmentsDir.path}${Platform.pathSeparator}${transfer.fileName}';
+                transfer.file = await File(destPath).open(mode: FileMode.write);
+                transfer.savedPath = destPath;
+                bindings.fileControl(currentTox, friendNumber, fileNumber,
+                    kToxFileControlResume);
+              } catch (e) {
+                mainSendPort.send(
+                  ToxFileTransferEvent(
+                    publicKeyHex: publicKeyHex,
+                    fileNumber: fileNumber,
+                    phase: ToxFileTransferPhase.failed,
+                    outgoing: false,
+                    fileName: transfer.fileName,
+                    totalBytes: transfer.totalBytes,
+                    errorMessage: e.toString(),
+                  ),
+                );
+              }
             }());
             return;
           }

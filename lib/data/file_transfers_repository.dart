@@ -50,8 +50,35 @@ class FileTransfersRepository {
             totalBytes: totalBytes,
             outgoing: outgoing,
             status: status,
+            // Só as recebidas nascem não-lidas — o que a própria pessoa
+            // mandou não entra na contagem de "não lidas" (mesmo raciocínio
+            // de Messages.read).
+            read: Value(outgoing),
           ),
         );
+  }
+
+  /// Quantas transferências recebidas deste contato ainda não foram vistas —
+  /// somado à contagem de mensagens de texto pro badge da lista de contatos
+  /// (ver unreadMessagesCountProvider).
+  Stream<int> watchUnreadCount(String contactPublicKeyHex) {
+    final query = _db.select(_db.fileTransfers)
+      ..where((t) =>
+          t.contactPublicKeyHex.equals(contactPublicKeyHex) &
+          t.outgoing.equals(false) &
+          t.read.equals(false));
+    return query.watch().map((rows) => rows.length);
+  }
+
+  /// Marca todas as transferências recebidas desse contato como vistas —
+  /// chamado ao abrir a tela de chat, junto com o markAllRead de mensagens.
+  Future<void> markAllRead(String contactPublicKeyHex) async {
+    await (_db.update(_db.fileTransfers)
+          ..where((t) =>
+              t.contactPublicKeyHex.equals(contactPublicKeyHex) &
+              t.outgoing.equals(false) &
+              t.read.equals(false)))
+        .write(const FileTransfersCompanion(read: Value(true)));
   }
 
   Future<void> updateById({

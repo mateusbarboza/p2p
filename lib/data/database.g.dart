@@ -829,6 +829,15 @@ class $FileTransfersTable extends FileTransfers
       type: DriftSqlType.dateTime,
       requiredDuringInsert: false,
       defaultValue: currentDateAndTime);
+  static const VerificationMeta _readMeta = const VerificationMeta('read');
+  @override
+  late final GeneratedColumn<bool> read = GeneratedColumn<bool>(
+      'read', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("read" IN (0, 1))'),
+      defaultValue: const Constant(true));
   @override
   List<GeneratedColumn> get $columns => [
         id,
@@ -840,7 +849,8 @@ class $FileTransfersTable extends FileTransfers
         outgoing,
         status,
         savedPath,
-        timestamp
+        timestamp,
+        read
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -905,6 +915,10 @@ class $FileTransfersTable extends FileTransfers
       context.handle(_timestampMeta,
           timestamp.isAcceptableOrUnknown(data['timestamp']!, _timestampMeta));
     }
+    if (data.containsKey('read')) {
+      context.handle(
+          _readMeta, read.isAcceptableOrUnknown(data['read']!, _readMeta));
+    }
     return context;
   }
 
@@ -936,6 +950,8 @@ class $FileTransfersTable extends FileTransfers
           .read(DriftSqlType.string, data['${effectivePrefix}saved_path']),
       timestamp: attachedDatabase.typeMapping
           .read(DriftSqlType.dateTime, data['${effectivePrefix}timestamp'])!,
+      read: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}read'])!,
     );
   }
 
@@ -960,6 +976,12 @@ class FileTransfer extends DataClass implements Insertable<FileTransfer> {
   final ToxFileTransferPhase status;
   final String? savedPath;
   final DateTime timestamp;
+
+  /// Mesmo raciocínio de [Messages.read]: só relevante pra transferências
+  /// recebidas (`outgoing: false`) — as que nós mandamos nascem já `true`.
+  /// Sem isso, um áudio/arquivo recebido com a conversa fechada não contava
+  /// pro badge de não lidas na lista de contatos.
+  final bool read;
   const FileTransfer(
       {required this.id,
       required this.contactPublicKeyHex,
@@ -970,7 +992,8 @@ class FileTransfer extends DataClass implements Insertable<FileTransfer> {
       required this.outgoing,
       required this.status,
       this.savedPath,
-      required this.timestamp});
+      required this.timestamp,
+      required this.read});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -989,6 +1012,7 @@ class FileTransfer extends DataClass implements Insertable<FileTransfer> {
       map['saved_path'] = Variable<String>(savedPath);
     }
     map['timestamp'] = Variable<DateTime>(timestamp);
+    map['read'] = Variable<bool>(read);
     return map;
   }
 
@@ -1006,6 +1030,7 @@ class FileTransfer extends DataClass implements Insertable<FileTransfer> {
           ? const Value.absent()
           : Value(savedPath),
       timestamp: Value(timestamp),
+      read: Value(read),
     );
   }
 
@@ -1025,6 +1050,7 @@ class FileTransfer extends DataClass implements Insertable<FileTransfer> {
           .fromJson(serializer.fromJson<String>(json['status'])),
       savedPath: serializer.fromJson<String?>(json['savedPath']),
       timestamp: serializer.fromJson<DateTime>(json['timestamp']),
+      read: serializer.fromJson<bool>(json['read']),
     );
   }
   @override
@@ -1042,6 +1068,7 @@ class FileTransfer extends DataClass implements Insertable<FileTransfer> {
           .toJson<String>($FileTransfersTable.$converterstatus.toJson(status)),
       'savedPath': serializer.toJson<String?>(savedPath),
       'timestamp': serializer.toJson<DateTime>(timestamp),
+      'read': serializer.toJson<bool>(read),
     };
   }
 
@@ -1055,7 +1082,8 @@ class FileTransfer extends DataClass implements Insertable<FileTransfer> {
           bool? outgoing,
           ToxFileTransferPhase? status,
           Value<String?> savedPath = const Value.absent(),
-          DateTime? timestamp}) =>
+          DateTime? timestamp,
+          bool? read}) =>
       FileTransfer(
         id: id ?? this.id,
         contactPublicKeyHex: contactPublicKeyHex ?? this.contactPublicKeyHex,
@@ -1067,6 +1095,7 @@ class FileTransfer extends DataClass implements Insertable<FileTransfer> {
         status: status ?? this.status,
         savedPath: savedPath.present ? savedPath.value : this.savedPath,
         timestamp: timestamp ?? this.timestamp,
+        read: read ?? this.read,
       );
   FileTransfer copyWithCompanion(FileTransfersCompanion data) {
     return FileTransfer(
@@ -1087,6 +1116,7 @@ class FileTransfer extends DataClass implements Insertable<FileTransfer> {
       status: data.status.present ? data.status.value : this.status,
       savedPath: data.savedPath.present ? data.savedPath.value : this.savedPath,
       timestamp: data.timestamp.present ? data.timestamp.value : this.timestamp,
+      read: data.read.present ? data.read.value : this.read,
     );
   }
 
@@ -1102,7 +1132,8 @@ class FileTransfer extends DataClass implements Insertable<FileTransfer> {
           ..write('outgoing: $outgoing, ')
           ..write('status: $status, ')
           ..write('savedPath: $savedPath, ')
-          ..write('timestamp: $timestamp')
+          ..write('timestamp: $timestamp, ')
+          ..write('read: $read')
           ..write(')'))
         .toString();
   }
@@ -1118,7 +1149,8 @@ class FileTransfer extends DataClass implements Insertable<FileTransfer> {
       outgoing,
       status,
       savedPath,
-      timestamp);
+      timestamp,
+      read);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -1132,7 +1164,8 @@ class FileTransfer extends DataClass implements Insertable<FileTransfer> {
           other.outgoing == this.outgoing &&
           other.status == this.status &&
           other.savedPath == this.savedPath &&
-          other.timestamp == this.timestamp);
+          other.timestamp == this.timestamp &&
+          other.read == this.read);
 }
 
 class FileTransfersCompanion extends UpdateCompanion<FileTransfer> {
@@ -1146,6 +1179,7 @@ class FileTransfersCompanion extends UpdateCompanion<FileTransfer> {
   final Value<ToxFileTransferPhase> status;
   final Value<String?> savedPath;
   final Value<DateTime> timestamp;
+  final Value<bool> read;
   const FileTransfersCompanion({
     this.id = const Value.absent(),
     this.contactPublicKeyHex = const Value.absent(),
@@ -1157,6 +1191,7 @@ class FileTransfersCompanion extends UpdateCompanion<FileTransfer> {
     this.status = const Value.absent(),
     this.savedPath = const Value.absent(),
     this.timestamp = const Value.absent(),
+    this.read = const Value.absent(),
   });
   FileTransfersCompanion.insert({
     this.id = const Value.absent(),
@@ -1169,6 +1204,7 @@ class FileTransfersCompanion extends UpdateCompanion<FileTransfer> {
     required ToxFileTransferPhase status,
     this.savedPath = const Value.absent(),
     this.timestamp = const Value.absent(),
+    this.read = const Value.absent(),
   })  : contactPublicKeyHex = Value(contactPublicKeyHex),
         toxFileNumber = Value(toxFileNumber),
         fileName = Value(fileName),
@@ -1186,6 +1222,7 @@ class FileTransfersCompanion extends UpdateCompanion<FileTransfer> {
     Expression<String>? status,
     Expression<String>? savedPath,
     Expression<DateTime>? timestamp,
+    Expression<bool>? read,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -1199,6 +1236,7 @@ class FileTransfersCompanion extends UpdateCompanion<FileTransfer> {
       if (status != null) 'status': status,
       if (savedPath != null) 'saved_path': savedPath,
       if (timestamp != null) 'timestamp': timestamp,
+      if (read != null) 'read': read,
     });
   }
 
@@ -1212,7 +1250,8 @@ class FileTransfersCompanion extends UpdateCompanion<FileTransfer> {
       Value<bool>? outgoing,
       Value<ToxFileTransferPhase>? status,
       Value<String?>? savedPath,
-      Value<DateTime>? timestamp}) {
+      Value<DateTime>? timestamp,
+      Value<bool>? read}) {
     return FileTransfersCompanion(
       id: id ?? this.id,
       contactPublicKeyHex: contactPublicKeyHex ?? this.contactPublicKeyHex,
@@ -1224,6 +1263,7 @@ class FileTransfersCompanion extends UpdateCompanion<FileTransfer> {
       status: status ?? this.status,
       savedPath: savedPath ?? this.savedPath,
       timestamp: timestamp ?? this.timestamp,
+      read: read ?? this.read,
     );
   }
 
@@ -1262,6 +1302,9 @@ class FileTransfersCompanion extends UpdateCompanion<FileTransfer> {
     if (timestamp.present) {
       map['timestamp'] = Variable<DateTime>(timestamp.value);
     }
+    if (read.present) {
+      map['read'] = Variable<bool>(read.value);
+    }
     return map;
   }
 
@@ -1277,7 +1320,8 @@ class FileTransfersCompanion extends UpdateCompanion<FileTransfer> {
           ..write('outgoing: $outgoing, ')
           ..write('status: $status, ')
           ..write('savedPath: $savedPath, ')
-          ..write('timestamp: $timestamp')
+          ..write('timestamp: $timestamp, ')
+          ..write('read: $read')
           ..write(')'))
         .toString();
   }
@@ -3119,6 +3163,7 @@ typedef $$FileTransfersTableCreateCompanionBuilder = FileTransfersCompanion
   required ToxFileTransferPhase status,
   Value<String?> savedPath,
   Value<DateTime> timestamp,
+  Value<bool> read,
 });
 typedef $$FileTransfersTableUpdateCompanionBuilder = FileTransfersCompanion
     Function({
@@ -3132,6 +3177,7 @@ typedef $$FileTransfersTableUpdateCompanionBuilder = FileTransfersCompanion
   Value<ToxFileTransferPhase> status,
   Value<String?> savedPath,
   Value<DateTime> timestamp,
+  Value<bool> read,
 });
 
 class $$FileTransfersTableFilterComposer
@@ -3177,6 +3223,9 @@ class $$FileTransfersTableFilterComposer
 
   ColumnFilters<DateTime> get timestamp => $composableBuilder(
       column: $table.timestamp, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get read => $composableBuilder(
+      column: $table.read, builder: (column) => ColumnFilters(column));
 }
 
 class $$FileTransfersTableOrderingComposer
@@ -3220,6 +3269,9 @@ class $$FileTransfersTableOrderingComposer
 
   ColumnOrderings<DateTime> get timestamp => $composableBuilder(
       column: $table.timestamp, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get read => $composableBuilder(
+      column: $table.read, builder: (column) => ColumnOrderings(column));
 }
 
 class $$FileTransfersTableAnnotationComposer
@@ -3260,6 +3312,9 @@ class $$FileTransfersTableAnnotationComposer
 
   GeneratedColumn<DateTime> get timestamp =>
       $composableBuilder(column: $table.timestamp, builder: (column) => column);
+
+  GeneratedColumn<bool> get read =>
+      $composableBuilder(column: $table.read, builder: (column) => column);
 }
 
 class $$FileTransfersTableTableManager extends RootTableManager<
@@ -3298,6 +3353,7 @@ class $$FileTransfersTableTableManager extends RootTableManager<
             Value<ToxFileTransferPhase> status = const Value.absent(),
             Value<String?> savedPath = const Value.absent(),
             Value<DateTime> timestamp = const Value.absent(),
+            Value<bool> read = const Value.absent(),
           }) =>
               FileTransfersCompanion(
             id: id,
@@ -3310,6 +3366,7 @@ class $$FileTransfersTableTableManager extends RootTableManager<
             status: status,
             savedPath: savedPath,
             timestamp: timestamp,
+            read: read,
           ),
           createCompanionCallback: ({
             Value<int> id = const Value.absent(),
@@ -3322,6 +3379,7 @@ class $$FileTransfersTableTableManager extends RootTableManager<
             required ToxFileTransferPhase status,
             Value<String?> savedPath = const Value.absent(),
             Value<DateTime> timestamp = const Value.absent(),
+            Value<bool> read = const Value.absent(),
           }) =>
               FileTransfersCompanion.insert(
             id: id,
@@ -3334,6 +3392,7 @@ class $$FileTransfersTableTableManager extends RootTableManager<
             status: status,
             savedPath: savedPath,
             timestamp: timestamp,
+            read: read,
           ),
           withReferenceMapper: (p0) => p0
               .map((e) => (

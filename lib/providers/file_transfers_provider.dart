@@ -24,15 +24,24 @@ class FileTransfersSyncNotifier extends Notifier<void> {
   /// de forma estável entre execuções nem entre transferências sucessivas.
   final Map<(String, int), int> _activeRowIds = {};
 
+  /// Insert do `requested` em andamento, por chave — sem isso, um evento
+  /// seguinte (progress/completed) que chega ANTES do insert terminar (muito
+  /// comum em rede local, onde a transferência inteira pode acabar em menos
+  /// tempo que um `INSERT` no SQLite) achava `_activeRowIds[key]` ainda
+  /// vazio e descartava a atualização — a linha ficava presa em "requested"
+  /// pra sempre, mesmo com o arquivo já recebido por completo.
+  final Map<(String, int), Future<int>> _pendingInserts = {};
+
   @override
   void build() {
     final repository = ref.watch(fileTransfersRepositoryProvider);
     ref.listen(toxNetworkEventsProvider, (previous, next) {
-      next.whenData((event) => _handle(event, repository));
+      next.whenData((event) => unawaited(_handle(event, repository)));
     });
   }
 
-  void _handle(ToxNetworkEvent event, FileTransfersRepository repository) {
+  Future<void> _handle(
+      ToxNetworkEvent event, FileTransfersRepository repository) async {
     if (event is! ToxFileTransferEvent) return;
     final fileNumber = event.fileNumber;
     // Sem fileNumber (falha antes do toxcore atribuir um) não há o que
@@ -42,30 +51,32 @@ class FileTransfersSyncNotifier extends Notifier<void> {
     final key = (event.publicKeyHex, fileNumber);
 
     if (event.phase == ToxFileTransferPhase.requested) {
-      unawaited(() async {
-        final id = await repository.insert(
-          contactPublicKeyHex: event.publicKeyHex,
-          toxFileNumber: fileNumber,
-          fileName: event.fileName ?? '(sem nome)',
-          totalBytes: event.totalBytes ?? 0,
-          outgoing: event.outgoing,
-          status: event.phase,
-        );
-        _activeRowIds[key] = id;
-      }());
+      final future = repository.insert(
+        contactPublicKeyHex: event.publicKeyHex,
+        toxFileNumber: fileNumber,
+        fileName: event.fileName ?? '(sem nome)',
+        totalBytes: event.totalBytes ?? 0,
+        outgoing: event.outgoing,
+        status: event.phase,
+      );
+      _pendingInserts[key] = future;
+      final id = await future;
+      _activeRowIds[key] = id;
+      _pendingInserts.remove(key);
       return;
     }
 
-    final rowId = _activeRowIds[key];
+    // O insert do `requested` pode ainda não ter terminado — espera ele em
+    // vez de descartar o evento (ver o comentário de [_pendingInserts]).
+    var rowId = _activeRowIds[key];
+    rowId ??= await _pendingInserts[key];
     if (rowId == null) return; // evento sem uma linha ativa correspondente
 
-    unawaited(
-      repository.updateById(
-        id: rowId,
-        bytesTransferred: event.bytesTransferred ?? 0,
-        status: event.phase,
-        savedPath: event.savedPath,
-      ),
+    await repository.updateById(
+      id: rowId,
+      bytesTransferred: event.bytesTransferred ?? 0,
+      status: event.phase,
+      savedPath: event.savedPath,
     );
 
     const terminalPhases = {
@@ -94,4 +105,15 @@ final fileTransfersProvider =
   return ref
       .watch(fileTransfersRepositoryProvider)
       .watchForContact(publicKeyHex);
+});
+
+/// Quantos arquivos/áudios recebidos de um contato ainda não foram vistos —
+/// somado à contagem de mensagens de texto em unreadMessagesCountProvider
+/// (messages_provider.dart) pro badge da lista de contatos.
+final fileTransfersUnreadCountProvider =
+    StreamProvider.family<int, String>((ref, publicKeyHex) {
+  ref.watch(fileTransfersSyncProvider);
+  return ref
+      .watch(fileTransfersRepositoryProvider)
+      .watchUnreadCount(publicKeyHex);
 });

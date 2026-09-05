@@ -9,11 +9,15 @@
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_soloud/flutter_soloud.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:record/record.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'data/database.dart' show CallLog, FileTransfer, Message;
@@ -30,6 +34,14 @@ import 'tox_events.dart';
 /// Depois de quanto tempo sem digitar avisamos o contato que paramos —
 /// mesmo valor usado por outros clientes Tox (qTox, Toxic).
 const _kTypingStopDelay = Duration(seconds: 5);
+
+/// PCM cru (sem cabeçalho), não WAV/AAC — o SoLoud (usado pra tocar de volta
+/// em [_FileTransferBubble]) não decodifica de forma confiável o WAV que o
+/// `record` produz no Windows nem AAC/M4A, então gravamos e tocamos os bytes
+/// crus diretamente via buffer stream, igual à captura de voz ao vivo em
+/// call_provider.dart.
+const _kVoiceMessageSampleRate = 44100;
+const _kVoiceMessageChannels = 1;
 
 sealed class _TimelineItem {
   const _TimelineItem();
@@ -79,6 +91,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   bool _isTypingNotified = false;
   Timer? _typingStopTimer;
 
+  /// Gravação de mensagem de voz — grava via streaming (igual à captura de
+  /// voz ao vivo em call_provider.dart: gravar direto pra um arquivo PCM
+  /// falha no Windows com `AudioEncoder.pcm16bits`, native error "objeto ou
+  /// valor especificado não existe"), acumula os bytes e só grava o arquivo
+  /// no disco ao parar, antes de mandar pelo mecanismo de transferência de
+  /// arquivo já existente.
+  final AudioRecorder _voiceRecorder = AudioRecorder();
+  StreamSubscription<Uint8List>? _voiceRecordingSubscription;
+  final BytesBuilder _voiceRecordingBytes = BytesBuilder(copy: false);
+  bool _isRecordingVoice = false;
+  Timer? _voiceRecordingTimer;
+  Duration _voiceRecordingElapsed = Duration.zero;
+
   @override
   void initState() {
     super.initState();
@@ -88,6 +113,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     unawaited(
       ref
           .read(messagesRepositoryProvider)
+          .markAllRead(widget.contactPublicKeyHex),
+    );
+    unawaited(
+      ref
+          .read(fileTransfersRepositoryProvider)
           .markAllRead(widget.contactPublicKeyHex),
     );
     _messageController.addListener(_onMessageTextChanged);
@@ -172,6 +202,68 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         .sendFile(widget.contactPublicKeyHex, path);
   }
 
+  /// Começa a gravar uma mensagem de voz — toca de novo pra parar e enviar
+  /// (ver [_stopAndSendVoiceMessage]). Um segundo toque enquanto já grava é
+  /// ignorado (o botão vira "parar" assim que [_isRecordingVoice] fica true).
+  Future<void> _startVoiceRecording() async {
+    if (_isRecordingVoice) return;
+    final hasPermission = await _voiceRecorder.hasPermission();
+    if (!hasPermission) return;
+    _voiceRecordingBytes.clear();
+    final stream = await _voiceRecorder.startStream(const RecordConfig(
+      encoder: AudioEncoder.pcm16bits,
+      sampleRate: _kVoiceMessageSampleRate,
+      numChannels: _kVoiceMessageChannels,
+    ));
+    _voiceRecordingSubscription = stream.listen(_voiceRecordingBytes.add);
+    setState(() {
+      _isRecordingVoice = true;
+      _voiceRecordingElapsed = Duration.zero;
+    });
+    _voiceRecordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      setState(() {
+        _voiceRecordingElapsed += const Duration(seconds: 1);
+      });
+    });
+  }
+
+  Future<void> _stopAndSendVoiceMessage() async {
+    if (!_isRecordingVoice) return;
+    _voiceRecordingTimer?.cancel();
+    _voiceRecordingTimer = null;
+    await _voiceRecorder.stop();
+    await _voiceRecordingSubscription?.cancel();
+    _voiceRecordingSubscription = null;
+    setState(() => _isRecordingVoice = false);
+    final bytes = _voiceRecordingBytes.takeBytes();
+    // Grava curto demais / sem nenhum frame capturado — nada pra enviar.
+    if (bytes.isEmpty) return;
+    final directory = await getApplicationSupportDirectory();
+    final voiceDir = Directory(
+      '${directory.path}${Platform.pathSeparator}voice_messages',
+    );
+    await voiceDir.create(recursive: true);
+    final path = '${voiceDir.path}${Platform.pathSeparator}'
+        'voice_${DateTime.now().millisecondsSinceEpoch}.pcm';
+    await File(path).writeAsBytes(bytes);
+    ref
+        .read(toxIsolateManagerProvider)
+        .sendFile(widget.contactPublicKeyHex, path);
+  }
+
+  /// Para e descarta sem enviar — usado quando o usuário desiste no meio da
+  /// gravação (ver o botão de cancelar na barra de gravação).
+  Future<void> _cancelVoiceRecording() async {
+    if (!_isRecordingVoice) return;
+    _voiceRecordingTimer?.cancel();
+    _voiceRecordingTimer = null;
+    await _voiceRecorder.stop();
+    await _voiceRecordingSubscription?.cancel();
+    _voiceRecordingSubscription = null;
+    _voiceRecordingBytes.clear();
+    setState(() => _isRecordingVoice = false);
+  }
+
   void _respondToTransfer(int fileNumber, ToxFileControlAction action) {
     ref.read(toxIsolateManagerProvider).respondFileControl(
           widget.contactPublicKeyHex,
@@ -232,6 +324,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             false,
           );
     }
+    _voiceRecordingTimer?.cancel();
+    unawaited(_voiceRecordingSubscription?.cancel());
+    unawaited(_voiceRecorder.dispose());
     _messageController.removeListener(_onMessageTextChanged);
     _messageController.dispose();
     super.dispose();
@@ -251,6 +346,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           unawaited(
             ref
                 .read(messagesRepositoryProvider)
+                .markAllRead(widget.contactPublicKeyHex),
+          );
+        }
+        // Mesmo raciocínio acima, mas pra arquivo/áudio recebido (ex:
+        // mensagem de voz) chegando com a conversa já aberta.
+        if (event is ToxFileTransferEvent &&
+            !event.outgoing &&
+            event.phase == ToxFileTransferPhase.completed &&
+            event.publicKeyHex == widget.contactPublicKeyHex) {
+          unawaited(
+            ref
+                .read(fileTransfersRepositoryProvider)
                 .markAllRead(widget.contactPublicKeyHex),
           );
         }
@@ -325,33 +432,63 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.all(8),
-              child: Row(
-                children: [
-                  IconButton(
-                      onPressed: _attachFile,
-                      icon: const Icon(Icons.attach_file)),
-                  IconButton(
-                      onPressed: _showEmojiPicker,
-                      icon: const Icon(Icons.emoji_emotions_outlined)),
-                  Expanded(
-                    child: TextField(
-                      controller: _messageController,
-                      decoration: const InputDecoration(
-                        hintText: 'Mensagem...',
-                        border: OutlineInputBorder(),
-                      ),
-                      onSubmitted: (_) => _send(),
+              child: _isRecordingVoice
+                  ? _buildVoiceRecordingBar()
+                  : Row(
+                      children: [
+                        IconButton(
+                            onPressed: _attachFile,
+                            icon: const Icon(Icons.attach_file)),
+                        IconButton(
+                            onPressed: _showEmojiPicker,
+                            icon: const Icon(Icons.emoji_emotions_outlined)),
+                        Expanded(
+                          child: TextField(
+                            controller: _messageController,
+                            decoration: const InputDecoration(
+                              hintText: 'Mensagem...',
+                              border: OutlineInputBorder(),
+                            ),
+                            onSubmitted: (_) => _send(),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: _startVoiceRecording,
+                          tooltip: 'Gravar áudio',
+                          icon: const Icon(Icons.mic),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton.filled(
+                            onPressed: _send, icon: const Icon(Icons.send)),
+                      ],
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton.filled(
-                      onPressed: _send, icon: const Icon(Icons.send)),
-                ],
-              ),
             ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildVoiceRecordingBar() {
+    final minutes = _voiceRecordingElapsed.inMinutes.toString().padLeft(2, '0');
+    final seconds =
+        (_voiceRecordingElapsed.inSeconds % 60).toString().padLeft(2, '0');
+    return Row(
+      children: [
+        IconButton(
+          onPressed: _cancelVoiceRecording,
+          tooltip: 'Cancelar',
+          icon: const Icon(Icons.delete_outline),
+        ),
+        const Icon(Icons.fiber_manual_record, color: Colors.red, size: 14),
+        const SizedBox(width: 6),
+        Expanded(child: Text('Gravando áudio... $minutes:$seconds')),
+        IconButton.filled(
+          onPressed: _stopAndSendVoiceMessage,
+          tooltip: 'Enviar áudio',
+          icon: const Icon(Icons.send),
+        ),
+      ],
     );
   }
 
@@ -411,13 +548,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       return const Center(child: Text('Nenhuma mensagem ainda. Diga oi!'));
     }
 
+    // `reverse: true` + lista invertida (mais recente primeiro) em vez de
+    // pular manualmente pro fim depois de montar a lista — assim a
+    // conversa já abre exatamente na mensagem mais recente, sem o "flash"
+    // de aparecer no topo por um frame antes de pular.
+    final reversedItems = items.reversed.toList();
+
     return ListView.builder(
+      reverse: true,
       padding: const EdgeInsets.all(12),
-      itemCount: items.length,
+      itemCount: reversedItems.length,
       itemBuilder: (context, index) {
-        final item = items[index];
-        final showDateDivider = index == 0 ||
-            !isSameDay(items[index - 1].timestamp, item.timestamp);
+        final item = reversedItems[index];
+        final showDateDivider = index == reversedItems.length - 1 ||
+            !isSameDay(reversedItems[index + 1].timestamp, item.timestamp);
         final bubble = switch (item) {
           _MessageItem(:final message) => _HoverDeleteWrapper(
               alignRight: message.outgoing,
@@ -603,7 +747,7 @@ class _MessageBubble extends StatelessWidget {
   }
 }
 
-class _FileTransferBubble extends StatelessWidget {
+class _FileTransferBubble extends StatefulWidget {
   const _FileTransferBubble({
     required this.transfer,
     required this.onAccept,
@@ -614,6 +758,15 @@ class _FileTransferBubble extends StatelessWidget {
   final VoidCallback onAccept;
   final VoidCallback onReject;
 
+  @override
+  State<_FileTransferBubble> createState() => _FileTransferBubbleState();
+}
+
+class _FileTransferBubbleState extends State<_FileTransferBubble> {
+  FileTransfer get transfer => widget.transfer;
+  VoidCallback get onAccept => widget.onAccept;
+  VoidCallback get onReject => widget.onReject;
+
   static const _imageExtensions = {
     '.jpg',
     '.jpeg',
@@ -623,6 +776,21 @@ class _FileTransferBubble extends StatelessWidget {
     '.webp'
   };
 
+  static const _audioExtensions = {
+    '.pcm',
+    '.m4a',
+    '.aac',
+    '.mp3',
+    '.wav',
+    '.ogg',
+    '.opus',
+  };
+
+  AudioSource? _playbackSource;
+  SoundHandle? _playbackHandle;
+  StreamSubscription<StreamSoundEvent>? _playbackSubscription;
+  bool _isPlaying = false;
+
   bool get _isReceivedAndComplete =>
       !transfer.outgoing &&
       transfer.status == ToxFileTransferPhase.completed &&
@@ -631,6 +799,62 @@ class _FileTransferBubble extends StatelessWidget {
   bool get _isImage {
     final lowerName = transfer.fileName.toLowerCase();
     return _imageExtensions.any(lowerName.endsWith);
+  }
+
+  bool get _isAudio {
+    final lowerName = transfer.fileName.toLowerCase();
+    return _audioExtensions.any(lowerName.endsWith);
+  }
+
+  /// Toca/pausa a mensagem de voz recebida. Em vez de pedir pro SoLoud
+  /// decodificar o arquivo sozinho (`loadFile` falha tanto pro WAV que o
+  /// `record` produz no Windows quanto pro AAC/M4A — `SoLoudFileLoadFailedException`
+  /// nos dois casos), lemos os bytes PCM crus e empurramos direto num buffer
+  /// stream, igual à reprodução de áudio ao vivo em call_provider.dart.
+  Future<void> _togglePlayback() async {
+    final path = transfer.savedPath;
+    if (path == null) return;
+    final handle = _playbackHandle;
+    if (_isPlaying && handle != null) {
+      await SoLoud.instance.stop(handle);
+      setState(() => _isPlaying = false);
+      return;
+    }
+    if (!SoLoud.instance.isInitialized) {
+      await SoLoud.instance.init();
+    }
+    final oldSource = _playbackSource;
+    if (oldSource != null) {
+      await _playbackSubscription?.cancel();
+      await SoLoud.instance.disposeSource(oldSource);
+    }
+    final source = SoLoud.instance.setBufferStream(
+      sampleRate: _kVoiceMessageSampleRate,
+      channels: Channels.mono,
+      format: BufferType.s16le,
+      bufferingTimeNeeds: 0,
+    );
+    _playbackSource = source;
+    _playbackSubscription = source.soundEvents.listen((event) {
+      if (event.event == SoundEventType.handleIsNoMoreValid && mounted) {
+        setState(() => _isPlaying = false);
+      }
+    });
+    final bytes = await File(path).readAsBytes();
+    SoLoud.instance.addAudioDataStream(source, bytes);
+    SoLoud.instance.setDataIsEnded(source);
+    _playbackHandle = SoLoud.instance.play(source);
+    if (mounted) setState(() => _isPlaying = true);
+  }
+
+  @override
+  void dispose() {
+    unawaited(_playbackSubscription?.cancel());
+    final source = _playbackSource;
+    if (source != null) {
+      unawaited(SoLoud.instance.disposeSource(source));
+    }
+    super.dispose();
   }
 
   Future<void> _openFile() async {
@@ -676,13 +900,31 @@ class _FileTransferBubble extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.insert_drive_file_outlined, size: 20),
+              Icon(
+                _isAudio ? Icons.mic : Icons.insert_drive_file_outlined,
+                size: 20,
+              ),
               const SizedBox(width: 8),
               Expanded(
-                child: Text(transfer.fileName, overflow: TextOverflow.ellipsis),
+                child: Text(
+                  _isAudio ? 'Mensagem de voz' : transfer.fileName,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
             ],
           ),
+          if (_isReceivedAndComplete && _isAudio) ...[
+            const SizedBox(height: 8),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton.filled(
+                  onPressed: _togglePlayback,
+                  icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow),
+                ),
+              ],
+            ),
+          ],
           if (_isReceivedAndComplete && _isImage) ...[
             const SizedBox(height: 8),
             ClipRRect(
