@@ -417,14 +417,30 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Criar grupo'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(
-            labelText: 'Nome do grupo',
-            border: OutlineInputBorder(),
-          ),
-          onSubmitted: (value) => Navigator.pop(context, value.trim()),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: controller,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Nome do grupo',
+                border: OutlineInputBorder(),
+              ),
+              onSubmitted: (value) => Navigator.pop(context, value.trim()),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'O grupo só continua acessível enquanto tiver pelo menos uma '
+              'pessoa online nele (incluindo você). Se todo mundo ficar '
+              'offline ao mesmo tempo, ele pode não reaparecer sozinho '
+              'depois — é uma limitação atual do toxcore, não do Talksnap.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -530,7 +546,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           barrierDismissible: false,
           builder: (context) => AlertDialog(
             title: Text('Chamada de ${callerName ?? 'contato desconhecido'}'),
-            content: const Text('Chamada de voz recebida.'),
+            content: const Text('Chamada recebida.'),
             actions: [
               TextButton(
                 onPressed: () {
@@ -538,6 +554,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   Navigator.pop(context);
                 },
                 child: const Text('Recusar'),
+              ),
+              TextButton.icon(
+                onPressed: () {
+                  ref.read(callProvider.notifier).answer(video: true);
+                  Navigator.pop(context);
+                },
+                icon: const Icon(Icons.videocam),
+                label: const Text('Com vídeo'),
               ),
               FilledButton(
                 onPressed: () {
@@ -625,6 +649,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 icon: Icon(callState.muted ? Icons.mic_off : Icons.mic),
                 tooltip: callState.muted ? 'Reativar microfone' : 'Silenciar',
                 onPressed: () => ref.read(callProvider.notifier).toggleMute(),
+              ),
+            if (callState.status != CallStatus.idle)
+              IconButton(
+                icon: Icon(
+                  callState.sendingVideo ? Icons.videocam : Icons.videocam_off,
+                ),
+                tooltip:
+                    callState.sendingVideo ? 'Desligar câmera' : 'Ligar câmera',
+                onPressed: () => ref.read(callProvider.notifier).toggleVideo(),
               ),
             IconButton(
               icon: const Icon(Icons.call_end),

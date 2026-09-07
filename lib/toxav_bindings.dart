@@ -106,6 +106,42 @@ typedef _ToxavAudioSendFrameDart = int Function(
   ffi.Pointer<ffi.Int32> error,
 );
 
+// bool toxav_video_send_frame(ToxAV *av, uint32_t friend_number, uint16_t width, uint16_t height, const uint8_t y[], const uint8_t u[], const uint8_t v[], Toxav_Err_Send_Frame *error);
+typedef _ToxavVideoSendFrameNative = ffi.Uint8 Function(
+  ffi.Pointer<ffi.Void> av,
+  ffi.Uint32 friendNumber,
+  ffi.Uint16 width,
+  ffi.Uint16 height,
+  ffi.Pointer<ffi.Uint8> y,
+  ffi.Pointer<ffi.Uint8> u,
+  ffi.Pointer<ffi.Uint8> v,
+  ffi.Pointer<ffi.Int32> error,
+);
+typedef _ToxavVideoSendFrameDart = int Function(
+  ffi.Pointer<ffi.Void> av,
+  int friendNumber,
+  int width,
+  int height,
+  ffi.Pointer<ffi.Uint8> y,
+  ffi.Pointer<ffi.Uint8> u,
+  ffi.Pointer<ffi.Uint8> v,
+  ffi.Pointer<ffi.Int32> error,
+);
+
+// bool toxav_video_set_bit_rate(ToxAV *av, uint32_t friend_number, uint32_t bit_rate, Toxav_Err_Bit_Rate_Set *error);
+typedef _ToxavVideoSetBitRateNative = ffi.Uint8 Function(
+  ffi.Pointer<ffi.Void> av,
+  ffi.Uint32 friendNumber,
+  ffi.Uint32 bitRate,
+  ffi.Pointer<ffi.Int32> error,
+);
+typedef _ToxavVideoSetBitRateDart = int Function(
+  ffi.Pointer<ffi.Void> av,
+  int friendNumber,
+  int bitRate,
+  ffi.Pointer<ffi.Int32> error,
+);
+
 // typedef void toxav_call_cb(ToxAV *av, uint32_t friend_number, bool audio_enabled, bool video_enabled, void *user_data);
 typedef ToxAvCallCallbackNative = ffi.Void Function(
   ffi.Pointer<ffi.Void> av,
@@ -172,6 +208,42 @@ typedef _ToxavCallbackAudioReceiveFrameDart = void Function(
   ffi.Pointer<ffi.Void> userData,
 );
 
+// typedef void toxav_video_receive_frame_cb(ToxAV *av, uint32_t friend_number,
+//     uint16_t width, uint16_t height, const uint8_t y[], const uint8_t u[],
+//     const uint8_t v[], int32_t ystride, int32_t ustride, int32_t vstride,
+//     void *user_data);
+//
+// Strides podem vir negativos (imagem de cabeça pra baixo) ou maiores que a
+// dimensão da linha (padding) — quem trata isso é tox_isolate_manager.dart,
+// nunca assumir que os planos são compactos.
+typedef ToxAvVideoReceiveFrameCallbackNative = ffi.Void Function(
+  ffi.Pointer<ffi.Void> av,
+  ffi.Uint32 friendNumber,
+  ffi.Uint16 width,
+  ffi.Uint16 height,
+  ffi.Pointer<ffi.Uint8> y,
+  ffi.Pointer<ffi.Uint8> u,
+  ffi.Pointer<ffi.Uint8> v,
+  ffi.Int32 yStride,
+  ffi.Int32 uStride,
+  ffi.Int32 vStride,
+  ffi.Pointer<ffi.Void> userData,
+);
+
+// void toxav_callback_video_receive_frame(ToxAV *av, toxav_video_receive_frame_cb *callback, void *user_data);
+typedef _ToxavCallbackVideoReceiveFrameNative = ffi.Void Function(
+  ffi.Pointer<ffi.Void> av,
+  ffi.Pointer<ffi.NativeFunction<ToxAvVideoReceiveFrameCallbackNative>>
+      callback,
+  ffi.Pointer<ffi.Void> userData,
+);
+typedef _ToxavCallbackVideoReceiveFrameDart = void Function(
+  ffi.Pointer<ffi.Void> av,
+  ffi.Pointer<ffi.NativeFunction<ToxAvVideoReceiveFrameCallbackNative>>
+      callback,
+  ffi.Pointer<ffi.Void> userData,
+);
+
 /// Valores do enum `Toxav_Call_Control` usados pelo Talksnap (chamada de
 /// voz só usa cancelar — silenciar o próprio microfone é feito só pelo
 /// app, parando de mandar frames, sem chamar o nativo: `MUTE_AUDIO` no
@@ -179,10 +251,16 @@ typedef _ToxavCallbackAudioReceiveFrameDart = void Function(
 /// contrário).
 const int kToxavCallControlCancel = 2;
 
-/// Bits do enum `Toxav_Friend_Call_State` relevantes pra chamada de voz
-/// (o resto — vídeo, erro genérico — não é usado nesta fase).
+/// Bits do enum `Toxav_Friend_Call_State` usados pelo Talksnap.
+///
+/// IMPORTANTE, fácil de confundir: `SENDING_*` = o CONTATO está mandando
+/// aquela mídia PRA NÓS; `ACCEPTING_*` = o CONTATO está aceitando RECEBER
+/// aquela mídia DE NÓS (ou seja, reflete nosso próprio envio, não o dele).
+/// Pra saber se tem vídeo do contato pra mostrar, o bit certo é
+/// `SENDING_V`, não `ACCEPTING_V` (ver toxav.h).
 const int kToxavFriendCallStateError = 1;
 const int kToxavFriendCallStateFinished = 2;
+const int kToxavFriendCallStateSendingV = 8;
 const int kToxavFriendCallStateAcceptingA = 16;
 
 /// Lançada por qualquer wrapper da ToxAV quando o código de erro nativo
@@ -219,10 +297,14 @@ class ToxAvBindings {
   late final _ToxavAnswerDart _toxavAnswer;
   late final _ToxavCallControlDart _toxavCallControl;
   late final _ToxavAudioSendFrameDart _toxavAudioSendFrame;
+  late final _ToxavVideoSendFrameDart _toxavVideoSendFrame;
+  late final _ToxavVideoSetBitRateDart _toxavVideoSetBitRate;
   late final _ToxavCallbackCallDart _toxavCallbackCall;
   late final _ToxavCallbackCallStateDart _toxavCallbackCallState;
   late final _ToxavCallbackAudioReceiveFrameDart
       _toxavCallbackAudioReceiveFrame;
+  late final _ToxavCallbackVideoReceiveFrameDart
+      _toxavCallbackVideoReceiveFrame;
 
   /// Mesma DLL que `ToxCoreBindings` já carrega — abrir de novo pelo nome
   /// só pega outro handle pro módulo já residente no processo (o Windows
@@ -260,6 +342,10 @@ class ToxAvBindings {
             'toxav_call_control');
     _toxavAudioSendFrame = _lib.lookupFunction<_ToxavAudioSendFrameNative,
         _ToxavAudioSendFrameDart>('toxav_audio_send_frame');
+    _toxavVideoSendFrame = _lib.lookupFunction<_ToxavVideoSendFrameNative,
+        _ToxavVideoSendFrameDart>('toxav_video_send_frame');
+    _toxavVideoSetBitRate = _lib.lookupFunction<_ToxavVideoSetBitRateNative,
+        _ToxavVideoSetBitRateDart>('toxav_video_set_bit_rate');
     _toxavCallbackCall =
         _lib.lookupFunction<_ToxavCallbackCallNative, _ToxavCallbackCallDart>(
             'toxav_callback_call');
@@ -269,6 +355,10 @@ class ToxAvBindings {
             _ToxavCallbackAudioReceiveFrameNative,
             _ToxavCallbackAudioReceiveFrameDart>(
         'toxav_callback_audio_receive_frame');
+    _toxavCallbackVideoReceiveFrame = _lib.lookupFunction<
+            _ToxavCallbackVideoReceiveFrameNative,
+            _ToxavCallbackVideoReceiveFrameDart>(
+        'toxav_callback_video_receive_frame');
   }
 
   /// Cria a instância ToxAV associada a este `tox` — 1 por instância Tox,
@@ -294,13 +384,20 @@ class ToxAvBindings {
 
   void toxavIterate(ffi.Pointer<ffi.Void> av) => _toxavIterate(av);
 
-  /// Inicia uma chamada de voz (sem vídeo: `videoBitRate` fixo em 0) com
-  /// um amigo já conectado. Erros (ex: já existe uma chamada com ele) só
-  /// lançam — quem chama decide o que fazer.
-  void toxavCall(ffi.Pointer<ffi.Void> av, int friendNumber, int audioBitRate) {
+  /// Inicia uma chamada com um amigo já conectado — `videoBitRate` em 0
+  /// (padrão) faz uma chamada só de voz, > 0 negocia vídeo também. Erros
+  /// (ex: já existe uma chamada com ele) só lançam — quem chama decide o
+  /// que fazer.
+  void toxavCall(
+    ffi.Pointer<ffi.Void> av,
+    int friendNumber,
+    int audioBitRate, {
+    int videoBitRate = 0,
+  }) {
     final errorPtr = pkg_ffi.calloc<ffi.Int32>();
     try {
-      final ok = _toxavCall(av, friendNumber, audioBitRate, 0, errorPtr);
+      final ok =
+          _toxavCall(av, friendNumber, audioBitRate, videoBitRate, errorPtr);
       final errorCode = errorPtr.value;
       if (ok == 0 || errorCode != 0) {
         throw ToxAvException(
@@ -311,12 +408,18 @@ class ToxAvBindings {
     }
   }
 
-  /// Atende uma chamada recebida (sem vídeo).
+  /// Atende uma chamada recebida — mesmo raciocínio de [toxavCall] pro
+  /// `videoBitRate`.
   void toxavAnswer(
-      ffi.Pointer<ffi.Void> av, int friendNumber, int audioBitRate) {
+    ffi.Pointer<ffi.Void> av,
+    int friendNumber,
+    int audioBitRate, {
+    int videoBitRate = 0,
+  }) {
     final errorPtr = pkg_ffi.calloc<ffi.Int32>();
     try {
-      final ok = _toxavAnswer(av, friendNumber, audioBitRate, 0, errorPtr);
+      final ok =
+          _toxavAnswer(av, friendNumber, audioBitRate, videoBitRate, errorPtr);
       final errorCode = errorPtr.value;
       if (ok == 0 || errorCode != 0) {
         throw ToxAvException(
@@ -358,6 +461,50 @@ class ToxAvBindings {
     }
   }
 
+  /// Manda um frame de vídeo YUV420 planar (Y, depois U, depois V — ver
+  /// call_provider.dart, que já entrega os 3 planos prontos vindo da
+  /// conversão BGR->I420 do opencv_dart). Ignora erro pelo mesmo motivo de
+  /// [toxavAudioSendFrame].
+  void toxavVideoSendFrame(
+    ffi.Pointer<ffi.Void> av,
+    int friendNumber,
+    int width,
+    int height,
+    ffi.Pointer<ffi.Uint8> y,
+    ffi.Pointer<ffi.Uint8> u,
+    ffi.Pointer<ffi.Uint8> v,
+  ) {
+    final errorPtr = pkg_ffi.calloc<ffi.Int32>();
+    try {
+      _toxavVideoSendFrame(av, friendNumber, width, height, y, u, v, errorPtr);
+    } finally {
+      pkg_ffi.calloc.free(errorPtr);
+    }
+  }
+
+  /// Liga/desliga o canal de vídeo de uma chamada JÁ em andamento —
+  /// necessário quando a chamada começou só de voz (`video_bit_rate = 0`
+  /// em toxav_call/toxav_answer) e o vídeo é ligado depois, no meio dela
+  /// (ver [CallNotifier.toggleVideo] em call_provider.dart): sem isso,
+  /// `toxav_video_send_frame` não tem efeito — o toxav só transmite vídeo
+  /// pra uma chamada que já negociou um bit rate de vídeo > 0. `bitRate =
+  /// 0` desliga de novo.
+  void toxavVideoSetBitRate(
+      ffi.Pointer<ffi.Void> av, int friendNumber, int bitRate) {
+    final errorPtr = pkg_ffi.calloc<ffi.Int32>();
+    try {
+      final ok = _toxavVideoSetBitRate(av, friendNumber, bitRate, errorPtr);
+      final errorCode = errorPtr.value;
+      if (ok == 0 || errorCode != 0) {
+        throw ToxAvException(
+            'toxav_video_set_bit_rate falhou com Toxav_Err_Bit_Rate_Set = '
+            '$errorCode');
+      }
+    } finally {
+      pkg_ffi.calloc.free(errorPtr);
+    }
+  }
+
   void setCallCallback(
     ffi.Pointer<ffi.Void> av,
     ffi.Pointer<ffi.NativeFunction<ToxAvCallCallbackNative>> callback,
@@ -378,5 +525,13 @@ class ToxAvBindings {
         callback,
   ) {
     _toxavCallbackAudioReceiveFrame(av, callback, ffi.nullptr);
+  }
+
+  void setVideoReceiveFrameCallback(
+    ffi.Pointer<ffi.Void> av,
+    ffi.Pointer<ffi.NativeFunction<ToxAvVideoReceiveFrameCallbackNative>>
+        callback,
+  ) {
+    _toxavCallbackVideoReceiveFrame(av, callback, ffi.nullptr);
   }
 }

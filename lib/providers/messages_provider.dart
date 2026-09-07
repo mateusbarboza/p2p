@@ -92,6 +92,7 @@ class MessagesSyncNotifier extends Notifier<void> {
       case ToxCallIncomingEvent():
       case ToxCallStateEvent():
       case ToxCallAudioFrameEvent():
+      case ToxCallVideoFrameEvent():
       case ToxFriendAddResultEvent():
       case ToxFriendRemovedEvent():
       case ToxFileTransferEvent():

@@ -31,6 +31,7 @@ dependencies:
   record: ^7.1.1
   flutter_soloud: ^5.0.2
   emoji_picker_flutter: ^4.5.4
+  opencv_dart: ^1.4.5
 
 dev_dependencies:
   flutter_test:

@@ -14,10 +14,12 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show ValueNotifier;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
 import 'package:record/record.dart';
 
+import '../camera_capture_isolate.dart';
 import '../data/database.dart' show CallLog;
 import '../tox_events.dart';
 import 'database_provider.dart';
@@ -32,6 +34,8 @@ class CallState {
     this.contactPublicKeyHex,
     this.muted = false,
     this.outgoing = false,
+    this.sendingVideo = false,
+    this.remoteVideoActive = false,
   });
 
   final CallStatus status;
@@ -42,14 +46,44 @@ class CallState {
   /// ligou — usado só pra saber como registrar o evento em [CallLogs].
   final bool outgoing;
 
-  CallState copyWith({CallStatus? status, bool? muted}) {
+  /// Nossa própria câmera está ligada e mandando frames.
+  final bool sendingVideo;
+
+  /// O CONTATO está mandando vídeo agora (bit SENDING_V do
+  /// [ToxCallStateEvent]) — independente de nós estarmos mandando ou não.
+  final bool remoteVideoActive;
+
+  CallState copyWith({
+    CallStatus? status,
+    bool? muted,
+    bool? sendingVideo,
+    bool? remoteVideoActive,
+  }) {
     return CallState(
       status: status ?? this.status,
       contactPublicKeyHex: contactPublicKeyHex,
       muted: muted ?? this.muted,
       outgoing: outgoing,
+      sendingVideo: sendingVideo ?? this.sendingVideo,
+      remoteVideoActive: remoteVideoActive ?? this.remoteVideoActive,
     );
   }
+}
+
+/// Frame de vídeo mais recente recebido de um contato — bytes BGRA prontos
+/// pra `ui.decodeImageFromPixels`. Fica fora do [CallState] (Riverpod) de
+/// propósito: um `Notifier` reconstrói a árvore inteira a cada mudança de
+/// estado, e frames chegam ~15x/segundo — a UI de vídeo escuta este
+/// [ValueNotifier] diretamente em vez de observar o provider.
+class RemoteVideoFrame {
+  const RemoteVideoFrame({
+    required this.width,
+    required this.height,
+    required this.bgraBytes,
+  });
+  final int width;
+  final int height;
+  final Uint8List bgraBytes;
 }
 
 /// Mono, 48kHz — taxa que o Opus (usado por dentro do toxav) lida bem, e
@@ -79,6 +113,22 @@ class CallNotifier extends Notifier<CallState> {
   int _ringtoneElapsedMs = 0;
   bool _ringtoneWarbleHigh = false;
 
+  /// Captura de câmera (opencv_dart), rodando num Isolate dedicado — ver
+  /// camera_capture_isolate.dart pro motivo (chamada nativa bloqueante que
+  /// pode travar; isolar isso evita congelar o app inteiro). `null` quando
+  /// a câmera está desligada/nunca foi ligada.
+  CameraCaptureIsolate? _camera;
+  StreamSubscription<CameraFrameData>? _cameraFrameSubscription;
+
+  /// Frame mais recente recebido do contato — ver [RemoteVideoFrame]. `null`
+  /// quando ninguém está mandando vídeo (ou fora de chamada).
+  final ValueNotifier<RemoteVideoFrame?> remoteVideoFrame = ValueNotifier(null);
+
+  /// Frame mais recente capturado da NOSSA própria câmera — usado só pro
+  /// preview local (canto da tela), mesmo formato de [remoteVideoFrame].
+  final ValueNotifier<RemoteVideoFrame?> localPreviewFrame =
+      ValueNotifier(null);
+
   @override
   CallState build() {
     ref.listen(toxNetworkEventsProvider, (previous, next) {
@@ -87,7 +137,10 @@ class CallNotifier extends Notifier<CallState> {
     ref.onDispose(() {
       unawaited(_stopRingtone());
       unawaited(_stopAudio());
+      _stopCamera();
       unawaited(_recorder.dispose());
+      remoteVideoFrame.dispose();
+      localPreviewFrame.dispose();
     });
     return const CallState();
   }
@@ -118,16 +171,24 @@ class CallNotifier extends Notifier<CallState> {
       if (event.ended) {
         unawaited(_stopRingtone());
         unawaited(_stopAudio());
+        _stopCamera();
+        remoteVideoFrame.value = null;
         unawaited(_logCall(event.publicKeyHex,
             outgoing: state.outgoing, kind: 'ended'));
         state = const CallState();
-      } else if (event.active && state.status != CallStatus.active) {
-        unawaited(_stopRingtone());
-        state = state.copyWith(status: CallStatus.active);
-        // _ensureAudioPipeline já deve ter rodado (ver [answer]/[startCall]
-        // — o toxav começa a entregar frames de áudio de verdade bem antes
-        // desse bit "ativo" aparecer, então não dá pra esperar até aqui).
-        unawaited(_ensureAudioPipeline(event.publicKeyHex));
+      } else {
+        if (event.active && state.status != CallStatus.active) {
+          unawaited(_stopRingtone());
+          state = state.copyWith(status: CallStatus.active);
+          // _ensureAudioPipeline já deve ter rodado (ver [answer]/[startCall]
+          // — o toxav começa a entregar frames de áudio de verdade bem antes
+          // desse bit "ativo" aparecer, então não dá pra esperar até aqui).
+          unawaited(_ensureAudioPipeline(event.publicKeyHex));
+        }
+        if (event.videoActive != state.remoteVideoActive) {
+          state = state.copyWith(remoteVideoActive: event.videoActive);
+          if (!event.videoActive) remoteVideoFrame.value = null;
+        }
       }
       return;
     }
@@ -141,12 +202,33 @@ class CallNotifier extends Notifier<CallState> {
           state.status != CallStatus.idle) {
         _playReceivedFrame(event.samples);
       }
+      return;
+    }
+
+    if (event is ToxCallVideoFrameEvent) {
+      if (state.contactPublicKeyHex == event.publicKeyHex) {
+        remoteVideoFrame.value = RemoteVideoFrame(
+          width: event.width,
+          height: event.height,
+          bgraBytes: event.bgraBytes,
+        );
+        // O bit SENDING_V do ToxCallStateEvent (usado pra [remoteVideoActive])
+        // demora alguns segundos pra ligar depois que o vídeo já está de
+        // verdade chegando — visto nos logs: mais de 100 frames reais
+        // decodificados antes do toxcore atualizar a flag. Um frame de
+        // verdade já É a prova de que o contato está mandando vídeo, então
+        // não faz sentido esperar o toxcore confirmar de novo.
+        if (!state.remoteVideoActive) {
+          state = state.copyWith(remoteVideoActive: true);
+        }
+      }
     }
   }
 
-  /// Liga (voz) pra um contato — o estado só avança pra [CallStatus.active]
-  /// quando o [ToxCallStateEvent] correspondente chegar (ele atendeu).
-  void startCall(String publicKeyHex) {
+  /// Liga pra um contato — `video: true` já liga a própria câmera junto. O
+  /// estado só avança pra [CallStatus.active] quando o [ToxCallStateEvent]
+  /// correspondente chegar (ele atendeu).
+  void startCall(String publicKeyHex, {bool video = false}) {
     if (state.status != CallStatus.idle) return;
     state = CallState(
       status: CallStatus.outgoingRinging,
@@ -159,17 +241,19 @@ class CallNotifier extends Notifier<CallState> {
     // prepara a reprodução/captura já aqui, não só quando o estado avança.
     unawaited(_ensureAudioPipeline(publicKeyHex));
     unawaited(_logCall(publicKeyHex, outgoing: true, kind: 'started'));
-    ref.read(toxIsolateManagerProvider).startCall(publicKeyHex);
+    ref.read(toxIsolateManagerProvider).startCall(publicKeyHex, video: video);
+    if (video) unawaited(_startCamera(publicKeyHex));
   }
 
   /// Atende a chamada que está tocando (ver [CallStatus.incomingRinging]).
-  void answer() {
+  void answer({bool video = false}) {
     final publicKeyHex = state.contactPublicKeyHex;
     if (publicKeyHex == null || state.status != CallStatus.incomingRinging) {
       return;
     }
     unawaited(_ensureAudioPipeline(publicKeyHex));
-    ref.read(toxIsolateManagerProvider).answerCall(publicKeyHex);
+    ref.read(toxIsolateManagerProvider).answerCall(publicKeyHex, video: video);
+    if (video) unawaited(_startCamera(publicKeyHex));
   }
 
   /// Encerra ou recusa a chamada atual, seja ela tocando ou já ativa.
@@ -179,6 +263,8 @@ class CallNotifier extends Notifier<CallState> {
     ref.read(toxIsolateManagerProvider).hangUp(publicKeyHex);
     unawaited(_stopRingtone());
     unawaited(_stopAudio());
+    _stopCamera();
+    remoteVideoFrame.value = null;
     unawaited(_logCall(publicKeyHex, outgoing: state.outgoing, kind: 'ended'));
     state = const CallState();
   }
@@ -189,6 +275,83 @@ class CallNotifier extends Notifier<CallState> {
     // funcionar desde a mesma hora, pros dois lados da ligação.
     if (state.status == CallStatus.idle) return;
     state = state.copyWith(muted: !state.muted);
+  }
+
+  /// Liga/desliga a própria câmera durante uma chamada em andamento — ao
+  /// contrário do mudo (que só para de mandar frames, silêncio "de graça"),
+  /// desligar a câmera precisa realmente soltar o dispositivo (senão a luz
+  /// da webcam fica acesa e outros apps não conseguem usá-la).
+  void toggleVideo() {
+    final publicKeyHex = state.contactPublicKeyHex;
+    if (publicKeyHex == null || state.status == CallStatus.idle) return;
+    if (state.sendingVideo) {
+      _stopCamera();
+    } else {
+      unawaited(_startCamera(publicKeyHex));
+    }
+  }
+
+  /// Resolução baixa fixa — evita `set()` de propriedades da câmera, que
+  /// varia muito entre webcams, e mantém a banda usada previsível.
+  static const _kVideoWidth = 320;
+  static const _kVideoHeight = 240;
+  static const _kVideoCaptureInterval = Duration(milliseconds: 66); // ~15fps
+
+  Future<void> _startCamera(String publicKeyHex) async {
+    if (_camera != null) return;
+    final camera = await CameraCaptureIsolate.start(
+      width: _kVideoWidth,
+      height: _kVideoHeight,
+      captureInterval: _kVideoCaptureInterval,
+    );
+    if (camera == null) return;
+    // A chamada pode ter sido encerrada ou a câmera desligada de novo
+    // enquanto o isolate ainda estava subindo — não deixa um resultado
+    // atrasado religar tudo sozinho.
+    if (state.status == CallStatus.idle || _camera != null) {
+      camera.stop();
+      return;
+    }
+    _camera = camera;
+    state = state.copyWith(sendingVideo: true);
+    // Liga o canal de vídeo no toxav — sem isso, se a chamada começou só
+    // de voz (video_bit_rate 0 em toxav_call/toxav_answer),
+    // toxav_video_send_frame não tem efeito nenhum e o outro lado nunca
+    // vê o bit "vídeo ativo" (ver toxavVideoSetBitRate em
+    // toxav_bindings.dart).
+    ref
+        .read(toxIsolateManagerProvider)
+        .setCallVideoBitRate(publicKeyHex, kCallVideoBitRateKbps);
+    _cameraFrameSubscription = camera.frames.listen((frame) {
+      ref.read(toxIsolateManagerProvider).sendCallVideoFrame(
+            publicKeyHex,
+            frame.width,
+            frame.height,
+            frame.yuvBytes,
+          );
+      localPreviewFrame.value = RemoteVideoFrame(
+        width: frame.width,
+        height: frame.height,
+        bgraBytes: frame.bgraBytes,
+      );
+    });
+  }
+
+  void _stopCamera() {
+    unawaited(_cameraFrameSubscription?.cancel());
+    _cameraFrameSubscription = null;
+    _camera?.stop();
+    _camera = null;
+    localPreviewFrame.value = null;
+    final publicKeyHex = state.contactPublicKeyHex;
+    if (state.sendingVideo) {
+      state = state.copyWith(sendingVideo: false);
+      if (publicKeyHex != null) {
+        ref
+            .read(toxIsolateManagerProvider)
+            .setCallVideoBitRate(publicKeyHex, 0);
+      }
+    }
   }
 
   /// Registra "chamando"/"encerrada" na timeline do chat com esse contato

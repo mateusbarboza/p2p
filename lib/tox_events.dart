@@ -15,6 +15,13 @@ import 'dart:typed_data' show Int16List, Uint8List;
 
 import 'tox_bindings.dart' show ToxConnection;
 
+/// Bit rate de vídeo EM KBIT/S — valor conservador pra resolução baixa
+/// (320x240 ~15fps, ver call_provider.dart) — usado tanto ao negociar
+/// vídeo já no início da chamada (`StartCallCommand`/`AnswerCallCommand.
+/// video == true`) quanto ao ligar a câmera no meio de uma chamada que
+/// começou só de voz (ver [SetCallVideoBitRateCommand]).
+const int kCallVideoBitRateKbps = 100;
+
 // ---------------------------------------------------------------------------
 // Eventos: isolate de rede -> UI
 // ---------------------------------------------------------------------------
@@ -111,29 +118,34 @@ class ToxFriendTypingEvent extends ToxNetworkEvent {
   final bool isTyping;
 }
 
-/// Um contato está nos ligando (`toxav_callback_call`) — só áudio nesta
-/// fase, então nem carrega `audioEnabled`/`videoEnabled` (sempre tratamos
-/// como pedido de chamada de voz).
+/// Um contato está nos ligando (`toxav_callback_call`) — nem carrega
+/// `audioEnabled`/`videoEnabled`: sempre tratamos como pedido de chamada de
+/// voz primeiro (a UI decide separadamente se liga a própria câmera), e o
+/// vídeo do OUTRO lado (se houver) só aparece de fato quando o bit
+/// SENDING_V do [ToxCallStateEvent] ligar.
 class ToxCallIncomingEvent extends ToxNetworkEvent {
   const ToxCallIncomingEvent({required this.publicKeyHex});
   final String publicKeyHex;
 }
 
 /// Mudança de estado de uma chamada em andamento (`toxav_callback_call_
-/// state`) — já traduzido do bitmask `Toxav_Friend_Call_State` pros dois
-/// bools que a UI precisa: `active` (chamada realmente conectada, trocando
-/// áudio) e `ended` (encerrada, por qualquer motivo — recusada, caiu,
-/// desligada pelo outro lado).
+/// state`) — já traduzido do bitmask `Toxav_Friend_Call_State` pros bools
+/// que a UI precisa: `active` (chamada realmente conectada, trocando
+/// áudio), `ended` (encerrada, por qualquer motivo — recusada, caiu,
+/// desligada pelo outro lado) e `videoActive` (o CONTATO está mandando
+/// vídeo agora — bit SENDING_V; independente de nós estarmos mandando).
 class ToxCallStateEvent extends ToxNetworkEvent {
   const ToxCallStateEvent({
     required this.publicKeyHex,
     required this.active,
     required this.ended,
+    required this.videoActive,
   });
 
   final String publicKeyHex;
   final bool active;
   final bool ended;
+  final bool videoActive;
 }
 
 /// Um frame de áudio decodificado chegou de um contato em chamada
@@ -147,6 +159,27 @@ class ToxCallAudioFrameEvent extends ToxNetworkEvent {
 
   final String publicKeyHex;
   final Int16List samples;
+}
+
+/// Um frame de vídeo decodificado chegou de um contato em chamada
+/// (`toxav_callback_video_receive_frame`) — o isolate de rede já converteu
+/// os planos Y/U/V (respeitando stride) pra BGR pronto pra virar `ui.Image`
+/// em call_provider.dart, sem a UI precisar lidar com YUV/stride.
+class ToxCallVideoFrameEvent extends ToxNetworkEvent {
+  const ToxCallVideoFrameEvent({
+    required this.publicKeyHex,
+    required this.width,
+    required this.height,
+    required this.bgraBytes,
+  });
+
+  final String publicKeyHex;
+  final int width;
+  final int height;
+
+  /// `width * height * 4` bytes, BGRA (alpha sempre 255) — formato aceito
+  /// direto por `ui.decodeImageFromPixels(..., ui.PixelFormat.bgra8888)`.
+  final Uint8List bgraBytes;
 }
 
 /// Resultado de um AddFriendCommand/AcceptFriendRequestCommand: sucesso (com
@@ -488,16 +521,20 @@ class SetTypingCommand extends ToxNetworkCommand {
   final bool isTyping;
 }
 
-/// Liga (voz, sem vídeo) para um contato já conectado.
+/// Liga para um contato já conectado — `video: true` negocia vídeo junto
+/// com a voz (ver `_kCallVideoBitRate` em tox_isolate_manager.dart).
 class StartCallCommand extends ToxNetworkCommand {
-  const StartCallCommand({required this.publicKeyHex});
+  const StartCallCommand({required this.publicKeyHex, this.video = false});
   final String publicKeyHex;
+  final bool video;
 }
 
-/// Atende uma chamada recebida (voz, sem vídeo).
+/// Atende uma chamada recebida — mesmo raciocínio de [StartCallCommand]
+/// pro `video`.
 class AnswerCallCommand extends ToxNetworkCommand {
-  const AnswerCallCommand({required this.publicKeyHex});
+  const AnswerCallCommand({required this.publicKeyHex, this.video = false});
   final String publicKeyHex;
+  final bool video;
 }
 
 /// Encerra ou recusa uma chamada (ativa ou ainda tocando) com um contato.
@@ -517,6 +554,39 @@ class SendCallAudioFrameCommand extends ToxNetworkCommand {
 
   final String publicKeyHex;
   final Int16List samples;
+}
+
+/// Manda um frame de vídeo capturado da webcam pro contato em chamada —
+/// [yuvBytes] já vem pronto no layout plano Y+U+V contíguo que
+/// `toxav_video_send_frame` espera (ver call_provider.dart, que faz a
+/// conversão BGR->I420 via opencv_dart antes de mandar esse comando).
+class SendCallVideoFrameCommand extends ToxNetworkCommand {
+  const SendCallVideoFrameCommand({
+    required this.publicKeyHex,
+    required this.width,
+    required this.height,
+    required this.yuvBytes,
+  });
+
+  final String publicKeyHex;
+  final int width;
+  final int height;
+  final Uint8List yuvBytes;
+}
+
+/// Liga/desliga o canal de vídeo de uma chamada JÁ em andamento (`bitRate
+/// > 0` liga, `0` desliga) — necessário quando a chamada começou só de voz
+/// e o vídeo é ligado depois, no meio dela (ver
+/// [CallNotifier.toggleVideo] em call_provider.dart), já que
+/// `toxav_call`/`toxav_answer` só negociam o vídeo no início da chamada.
+class SetCallVideoBitRateCommand extends ToxNetworkCommand {
+  const SetCallVideoBitRateCommand({
+    required this.publicKeyHex,
+    required this.bitRate,
+  });
+
+  final String publicKeyHex;
+  final int bitRate;
 }
 
 /// Oferece um arquivo local a um contato.

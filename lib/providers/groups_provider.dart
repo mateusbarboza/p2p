@@ -169,6 +169,7 @@ class GroupsNotifier extends Notifier<List<GroupViewModel>> {
       case ToxCallIncomingEvent():
       case ToxCallStateEvent():
       case ToxCallAudioFrameEvent():
+      case ToxCallVideoFrameEvent():
       case ToxFriendAddResultEvent():
       case ToxFriendRemovedEvent():
       case ToxFriendMessageEvent():

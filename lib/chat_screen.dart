@@ -10,9 +10,11 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
@@ -410,11 +412,21 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.contactLabel),
-        actions: [_buildCallAction(callState, isThisContactInCall)],
+        actions: [
+          _buildCallAction(callState, isThisContactInCall),
+          _buildVideoCallAction(callState, isThisContactInCall),
+        ],
       ),
       body: Column(
         children: [
+          if (isThisContactInCall &&
+              (callState.remoteVideoActive || callState.sendingVideo))
+            Expanded(flex: 7, child: _buildVideoArea(callState)),
           Expanded(
+            flex: isThisContactInCall &&
+                    (callState.remoteVideoActive || callState.sendingVideo)
+                ? 1
+                : 1,
             child: _buildTimeline(messagesAsync, transfersAsync, callLogsAsync),
           ),
           if (isContactTyping)
@@ -492,28 +504,75 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     );
   }
 
+  /// Só serve pra INICIAR uma chamada — uma vez em qualquer estado de
+  /// chamada com esse contato (tocando, ativa), some daqui: mudo/câmera/
+  /// desligar já ficam cobertos pela barra global (visível em qualquer
+  /// tela, ver main.dart), e "Atender"/"Atender com vídeo" já têm o modal
+  /// de chamada recebida — repetir os mesmos botões aqui só duplicava.
   Widget _buildCallAction(CallState callState, bool isThisContactInCall) {
-    if (!isThisContactInCall) {
-      return IconButton(
-        icon: const Icon(Icons.call),
-        tooltip: 'Ligar',
-        onPressed: () => ref
-            .read(callProvider.notifier)
-            .startCall(widget.contactPublicKeyHex),
-      );
-    }
-    if (callState.status == CallStatus.incomingRinging) {
-      return IconButton(
-        icon: const Icon(Icons.call),
-        tooltip: 'Atender',
-        onPressed: () => ref.read(callProvider.notifier).answer(),
-      );
-    }
+    if (isThisContactInCall) return const SizedBox.shrink();
     return IconButton(
-      icon: const Icon(Icons.call_end),
-      color: Colors.red,
-      tooltip: 'Desligar',
-      onPressed: () => ref.read(callProvider.notifier).hangUp(),
+      icon: const Icon(Icons.call),
+      tooltip: 'Ligar',
+      onPressed: () =>
+          ref.read(callProvider.notifier).startCall(widget.contactPublicKeyHex),
+    );
+  }
+
+  Widget _buildVideoCallAction(CallState callState, bool isThisContactInCall) {
+    if (isThisContactInCall) return const SizedBox.shrink();
+    return IconButton(
+      icon: const Icon(Icons.videocam),
+      tooltip: 'Ligar com vídeo',
+      onPressed: () => ref
+          .read(callProvider.notifier)
+          .startCall(widget.contactPublicKeyHex, video: true),
+    );
+  }
+
+  Widget _buildVideoArea(CallState callState) {
+    final notifier = ref.read(callProvider.notifier);
+    return Container(
+      color: Colors.black,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: callState.remoteVideoActive
+                ? _VideoFrameView(
+                    frameListenable: notifier.remoteVideoFrame,
+                    placeholder: const Center(
+                      child: Text(
+                        'Aguardando vídeo...',
+                        style: TextStyle(color: Colors.white70),
+                      ),
+                    ),
+                  )
+                : const Center(
+                    child: Text(
+                      'O contato não está mandando vídeo',
+                      style: TextStyle(color: Colors.white70),
+                    ),
+                  ),
+          ),
+          if (callState.sendingVideo)
+            Positioned(
+              right: 8,
+              bottom: 8,
+              child: Container(
+                width: 160,
+                height: 120,
+                clipBehavior: Clip.antiAlias,
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.white),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: _VideoFrameView(
+                  frameListenable: notifier.localPreviewFrame,
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 
@@ -590,6 +649,72 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         );
       },
     );
+  }
+}
+
+/// Decodifica e desenha o frame mais recente de um [RemoteVideoFrame] —
+/// escuta o `ValueListenable` direto (fora do Riverpod, ver o comentário em
+/// call_provider.dart) e larga o `ui.Image` antigo assim que o novo estiver
+/// pronto. Descarta frames que chegam enquanto uma decodificação anterior
+/// ainda está em andamento (throttling natural pela velocidade de decode).
+class _VideoFrameView extends StatefulWidget {
+  const _VideoFrameView({required this.frameListenable, this.placeholder});
+
+  final ValueListenable<RemoteVideoFrame?> frameListenable;
+  final Widget? placeholder;
+
+  @override
+  State<_VideoFrameView> createState() => _VideoFrameViewState();
+}
+
+class _VideoFrameViewState extends State<_VideoFrameView> {
+  ui.Image? _image;
+  bool _decoding = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.frameListenable.addListener(_onFrame);
+    _onFrame();
+  }
+
+  @override
+  void dispose() {
+    widget.frameListenable.removeListener(_onFrame);
+    _image?.dispose();
+    super.dispose();
+  }
+
+  void _onFrame() {
+    if (_decoding) return;
+    final frame = widget.frameListenable.value;
+    if (frame == null) return;
+    _decoding = true;
+    ui.decodeImageFromPixels(
+      frame.bgraBytes,
+      frame.width,
+      frame.height,
+      ui.PixelFormat.bgra8888,
+      (image) {
+        _decoding = false;
+        if (!mounted) {
+          image.dispose();
+          return;
+        }
+        final old = _image;
+        setState(() => _image = image);
+        old?.dispose();
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final image = _image;
+    if (image == null) {
+      return widget.placeholder ?? const SizedBox.shrink();
+    }
+    return RawImage(image: image, fit: BoxFit.cover);
   }
 }
 

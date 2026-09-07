@@ -142,6 +142,7 @@ class ContactsNotifier extends Notifier<List<ContactViewModel>> {
       case ToxCallIncomingEvent():
       case ToxCallStateEvent():
       case ToxCallAudioFrameEvent():
+      case ToxCallVideoFrameEvent():
         break;
     }
   }

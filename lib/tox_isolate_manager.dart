@@ -31,6 +31,7 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart' as pkg_ffi;
 import 'package:flutter/services.dart'
     show BackgroundIsolateBinaryMessenger, RootIsolateToken;
+import 'package:opencv_dart/opencv_dart.dart' as cv;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -79,8 +80,7 @@ const Duration _kBootstrapRetryInterval = Duration(seconds: 15);
 
 /// Bit rate de áudio EM KBIT/S (não bits/s! — é assim que toxav_call/
 /// toxav_answer esperam, ver toxav.h) usado em toda chamada de voz: 32
-/// kbit/s é bom o suficiente pra Opus falado, sem vídeo (`video_bit_rate`
-/// sempre 0).
+/// kbit/s é bom o suficiente pra Opus falado.
 const int _kCallAudioBitRate = 32;
 
 /// Payload enviado pelo isolate de rede para o isolate principal assim que
@@ -206,15 +206,16 @@ class ToxIsolateManager {
         SetTypingCommand(publicKeyHex: publicKeyHex, isTyping: isTyping));
   }
 
-  /// Liga (voz, sem vídeo) para um contato já conectado. O resultado chega
-  /// pela stream [updates] como [ToxCallStateEvent].
-  void startCall(String publicKeyHex) {
-    _sendCommand(StartCallCommand(publicKeyHex: publicKeyHex));
+  /// Liga para um contato já conectado — `video: true` negocia vídeo
+  /// também. O resultado chega pela stream [updates] como
+  /// [ToxCallStateEvent].
+  void startCall(String publicKeyHex, {bool video = false}) {
+    _sendCommand(StartCallCommand(publicKeyHex: publicKeyHex, video: video));
   }
 
   /// Atende uma chamada recebida (ver [ToxCallIncomingEvent]).
-  void answerCall(String publicKeyHex) {
-    _sendCommand(AnswerCallCommand(publicKeyHex: publicKeyHex));
+  void answerCall(String publicKeyHex, {bool video = false}) {
+    _sendCommand(AnswerCallCommand(publicKeyHex: publicKeyHex, video: video));
   }
 
   /// Encerra ou recusa uma chamada (ativa ou ainda tocando).
@@ -227,6 +228,29 @@ class ToxIsolateManager {
   void sendCallAudioFrame(String publicKeyHex, Int16List samples) {
     _sendCommand(SendCallAudioFrameCommand(
         publicKeyHex: publicKeyHex, samples: samples));
+  }
+
+  /// Manda um frame de vídeo (YUV420 plano, já pronto — ver
+  /// call_provider.dart) capturado da webcam.
+  void sendCallVideoFrame(
+    String publicKeyHex,
+    int width,
+    int height,
+    Uint8List yuvBytes,
+  ) {
+    _sendCommand(SendCallVideoFrameCommand(
+      publicKeyHex: publicKeyHex,
+      width: width,
+      height: height,
+      yuvBytes: yuvBytes,
+    ));
+  }
+
+  /// Liga (`bitRate > 0`) ou desliga (`0`) o canal de vídeo de uma chamada
+  /// já em andamento — ver [SetCallVideoBitRateCommand].
+  void setCallVideoBitRate(String publicKeyHex, int bitRate) {
+    _sendCommand(SetCallVideoBitRateCommand(
+        publicKeyHex: publicKeyHex, bitRate: bitRate));
   }
 
   /// Oferece um arquivo local a um contato. O progresso chega pela stream
@@ -441,6 +465,7 @@ class ToxIsolateManager {
         ended: (state &
                 (kToxavFriendCallStateFinished | kToxavFriendCallStateError)) !=
             0,
+        videoActive: (state & kToxavFriendCallStateSendingV) != 0,
       ),
     );
   }
@@ -464,6 +489,89 @@ class ToxIsolateManager {
     final samples = Int16List.fromList(pcm.asTypedList(sampleCount));
     _networkEventSendPort?.send(
       ToxCallAudioFrameEvent(publicKeyHex: publicKeyHex, samples: samples),
+    );
+  }
+
+  /// Copia um plano Y/U/V respeitando o stride (pode ter padding — nunca é
+  /// garantido que `stride == width`). Não trata corretamente o caso raro
+  /// de stride negativo (imagem de cabeça pra baixo) — só usa o valor
+  /// absoluto — aceitável nesta primeira versão (ver risco anotado no
+  /// plano de chamada de vídeo).
+  static Uint8List _copyVideoPlane(
+    ffi.Pointer<ffi.Uint8> ptr,
+    int width,
+    int height,
+    int stride,
+  ) {
+    final rowStride = stride.abs() < width ? width : stride.abs();
+    final out = Uint8List(width * height);
+    for (var row = 0; row < height; row++) {
+      final src = (ptr + row * rowStride).asTypedList(width);
+      out.setRange(row * width, row * width + width, src);
+    }
+    return out;
+  }
+
+  static int _videoFrameRecvCount = 0;
+
+  static void _onAvVideoReceiveFrameNative(
+    ffi.Pointer<ffi.Void> av,
+    int friendNumber,
+    int width,
+    int height,
+    ffi.Pointer<ffi.Uint8> y,
+    ffi.Pointer<ffi.Uint8> u,
+    ffi.Pointer<ffi.Uint8> v,
+    int yStride,
+    int uStride,
+    int vStride,
+    ffi.Pointer<ffi.Void> userData,
+  ) {
+    final tox = _activeTox;
+    if (tox == null) return;
+    final publicKeyHex =
+        ToxCoreBindings.instance.friendGetPublicKey(tox, friendNumber);
+    if (publicKeyHex == null) return;
+
+    _videoFrameRecvCount++;
+    if (_videoFrameRecvCount % 15 == 1) {
+      // ignore: avoid_print
+      print('[call-debug] _onAvVideoReceiveFrameNative #$_videoFrameRecvCount '
+          'friendNumber=$friendNumber width=$width height=$height');
+    }
+
+    final chromaWidth = (width / 2).ceil();
+    final chromaHeight = (height / 2).ceil();
+    final yBytes = _copyVideoPlane(y, width, height, yStride);
+    final uBytes = _copyVideoPlane(u, chromaWidth, chromaHeight, uStride);
+    final vBytes = _copyVideoPlane(v, chromaWidth, chromaHeight, vStride);
+
+    // Buffer I420 plano compacto (Y, depois U, depois V) — layout que o
+    // opencv_dart espera pra decodificar com cvtColor(COLOR_YUV2BGRA_I420).
+    final totalLength = yBytes.length + uBytes.length + vBytes.length;
+    final yuv = Uint8List(totalLength)
+      ..setRange(0, yBytes.length, yBytes)
+      ..setRange(yBytes.length, yBytes.length + uBytes.length, uBytes)
+      ..setRange(yBytes.length + uBytes.length, totalLength, vBytes);
+
+    final yuvMat = cv.Mat.create(
+      rows: (height * 1.5).toInt(),
+      cols: width,
+      type: cv.MatType.CV_8UC1,
+    );
+    yuvMat.data.setRange(0, yuv.length, yuv);
+    final bgraMat = cv.cvtColor(yuvMat, cv.COLOR_YUV2BGRA_I420);
+    final bgraBytes = Uint8List.fromList(bgraMat.data);
+    yuvMat.dispose();
+    bgraMat.dispose();
+
+    _networkEventSendPort?.send(
+      ToxCallVideoFrameEvent(
+        publicKeyHex: publicKeyHex,
+        width: width,
+        height: height,
+        bgraBytes: bgraBytes,
+      ),
     );
   }
 
@@ -1057,39 +1165,38 @@ class ToxIsolateManager {
           if (friendNumber == null) return;
           bindings.setSelfTyping(currentTox, friendNumber, isTyping);
 
-        case StartCallCommand(:final publicKeyHex):
+        case StartCallCommand(:final publicKeyHex, :final video):
           final currentToxAv = toxAv;
-          if (currentToxAv == null) {
-            // ignore: avoid_print
-            print('[call-debug] StartCallCommand: toxAv é null');
-            return;
-          }
+          if (currentToxAv == null) return;
           final friendNumber = findFriendNumberByPublicKey(publicKeyHex);
-          if (friendNumber == null) {
-            // ignore: avoid_print
-            print('[call-debug] StartCallCommand: friendNumber não encontrado');
-            return;
-          }
+          if (friendNumber == null) return;
           try {
             avBindings.toxavCall(
-                currentToxAv, friendNumber, _kCallAudioBitRate);
-            // ignore: avoid_print
-            print('[call-debug] toxavCall OK friendNumber=$friendNumber');
+              currentToxAv,
+              friendNumber,
+              _kCallAudioBitRate,
+              videoBitRate: video ? kCallVideoBitRateKbps : 0,
+            );
           } catch (e) {
             // ignore: avoid_print
-            print('[call-debug] toxavCall FALHOU: $e');
+            print('[call-debug] toxavCall (video=$video) falhou: $e');
           }
 
-        case AnswerCallCommand(:final publicKeyHex):
+        case AnswerCallCommand(:final publicKeyHex, :final video):
           final currentToxAv = toxAv;
           if (currentToxAv == null) return;
           final friendNumber = findFriendNumberByPublicKey(publicKeyHex);
           if (friendNumber == null) return;
           try {
             avBindings.toxavAnswer(
-                currentToxAv, friendNumber, _kCallAudioBitRate);
-          } catch (_) {
-            // Mesmo raciocínio do StartCallCommand acima.
+              currentToxAv,
+              friendNumber,
+              _kCallAudioBitRate,
+              videoBitRate: video ? kCallVideoBitRateKbps : 0,
+            );
+          } catch (e) {
+            // ignore: avoid_print
+            print('[call-debug] toxavAnswer (video=$video) falhou: $e');
           }
 
         case HangUpCallCommand(:final publicKeyHex):
@@ -1117,6 +1224,51 @@ class ToxIsolateManager {
             );
           } finally {
             pkg_ffi.calloc.free(pcmPtr);
+          }
+
+        case SendCallVideoFrameCommand(
+            :final publicKeyHex,
+            :final width,
+            :final height,
+            :final yuvBytes
+          ):
+          final currentToxAv = toxAv;
+          if (currentToxAv == null) return;
+          final friendNumber = findFriendNumberByPublicKey(publicKeyHex);
+          if (friendNumber == null) return;
+          final ySize = width * height;
+          final chromaSize = ((width / 2).ceil()) * ((height / 2).ceil());
+          final planesPtr = pkg_ffi.calloc<ffi.Uint8>(yuvBytes.length);
+          try {
+            planesPtr.asTypedList(yuvBytes.length).setAll(0, yuvBytes);
+            avBindings.toxavVideoSendFrame(
+              currentToxAv,
+              friendNumber,
+              width,
+              height,
+              planesPtr,
+              planesPtr + ySize,
+              planesPtr + ySize + chromaSize,
+            );
+          } finally {
+            pkg_ffi.calloc.free(planesPtr);
+          }
+
+        case SetCallVideoBitRateCommand(:final publicKeyHex, :final bitRate):
+          final currentToxAv = toxAv;
+          if (currentToxAv == null) return;
+          final friendNumber = findFriendNumberByPublicKey(publicKeyHex);
+          if (friendNumber == null) return;
+          try {
+            avBindings.toxavVideoSetBitRate(
+                currentToxAv, friendNumber, bitRate);
+            // ignore: avoid_print
+            print('[call-debug] toxavVideoSetBitRate friendNumber='
+                '$friendNumber bitRate=$bitRate OK');
+          } catch (e) {
+            // ignore: avoid_print
+            print('[call-debug] toxavVideoSetBitRate friendNumber='
+                '$friendNumber bitRate=$bitRate FALHOU: $e');
           }
 
         case SendFileCommand(:final publicKeyHex, :final filePath):
@@ -1429,6 +1581,11 @@ class ToxIsolateManager {
         currentToxAv,
         ffi.Pointer.fromFunction<ToxAvAudioReceiveFrameCallbackNative>(
             _onAvAudioReceiveFrameNative),
+      );
+      avBindings.setVideoReceiveFrameCallback(
+        currentToxAv,
+        ffi.Pointer.fromFunction<ToxAvVideoReceiveFrameCallbackNative>(
+            _onAvVideoReceiveFrameNative),
       );
 
       bindings.setFriendRequestCallback(
