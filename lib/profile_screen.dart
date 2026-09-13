@@ -11,11 +11,14 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'identity_backup.dart';
 import 'providers/self_profile_provider.dart';
+import 'providers/spell_check_provider.dart';
 import 'providers/theme_mode_provider.dart';
 import 'providers/tox_manager_provider.dart';
+import 'providers/update_provider.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({
@@ -374,10 +377,73 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
+  Future<void> _checkForUpdates() async {
+    await ref.read(updateProvider.notifier).checkNow();
+    if (!mounted) return;
+    final state = ref.read(updateProvider);
+    if (state.status == UpdateCheckStatus.upToDate) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Você já está na versão mais recente (${state.currentVersion}).',
+          ),
+        ),
+      );
+    } else if (state.status == UpdateCheckStatus.error) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(state.errorMessage ?? 'Erro desconhecido.')),
+      );
+    }
+  }
+
+  Future<void> _openReleasePage(String? url) async {
+    if (url == null) return;
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  Widget _buildUpdateSection(BuildContext context, UpdateCheckState state) {
+    final subtitle = switch (state.status) {
+      UpdateCheckStatus.idle =>
+        'Toque para checar se há uma versão mais nova do Talksnap.',
+      UpdateCheckStatus.checking => 'Verificando...',
+      UpdateCheckStatus.upToDate =>
+        'Você está na versão mais recente (${state.currentVersion}).',
+      UpdateCheckStatus.available =>
+        'Nova versão disponível: ${state.latestVersion}.',
+      UpdateCheckStatus.error =>
+        state.errorMessage ?? 'Não foi possível verificar atualizações.',
+    };
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      title: const Text('Verificar atualizações'),
+      subtitle: Text(subtitle),
+      trailing: state.status == UpdateCheckStatus.checking
+          ? const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : state.status == UpdateCheckStatus.available
+              ? FilledButton(
+                  onPressed: () => _openReleasePage(state.releaseUrl),
+                  child: const Text('Atualizar'),
+                )
+              : OutlinedButton(
+                  onPressed: _checkForUpdates,
+                  child: const Text('Verificar'),
+                ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final profile = ref.watch(selfProfileProvider);
     final themeMode = ref.watch(themeModeProvider);
+    final spellCheckEnabled = ref.watch(spellCheckProvider);
+    final updateState = ref.watch(updateProvider);
 
     // Só inicializa os controllers uma vez com o que já veio do toxcore —
     // depois disso, edição é livre (não sobrescrever o que o usuário está
@@ -464,6 +530,22 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     .read(themeModeProvider.notifier)
                     .setMode(selection.first),
               ),
+              const Divider(height: 40),
+              Text('Configurações',
+                  style: Theme.of(context).textTheme.titleMedium),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Verificar ortografia'),
+                subtitle: const Text(
+                  'Sublinha palavras que o corretor do sistema não reconhece '
+                  'ao digitar mensagens.',
+                ),
+                value: spellCheckEnabled,
+                onChanged: (value) =>
+                    ref.read(spellCheckProvider.notifier).setEnabled(value),
+              ),
+              const SizedBox(height: 8),
+              _buildUpdateSection(context, updateState),
               const Divider(height: 40),
               Text('Segurança', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 4),

@@ -14,6 +14,7 @@ import 'date_divider.dart';
 import 'providers/contacts_provider.dart' show ContactViewModel;
 import 'providers/group_messages_provider.dart';
 import 'providers/groups_provider.dart';
+import 'providers/spell_check_provider.dart';
 import 'providers/tox_events_provider.dart';
 import 'providers/tox_manager_provider.dart';
 import 'tox_bindings.dart' show ToxConnection;
@@ -153,6 +154,10 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
                               hintText: 'Mensagem...',
                               border: OutlineInputBorder(),
                             ),
+                            spellCheckConfiguration:
+                                ref.watch(spellCheckProvider)
+                                    ? const SpellCheckConfiguration()
+                                    : null,
                             onSubmitted: (_) => _send(),
                           ),
                         ),

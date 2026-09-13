@@ -32,6 +32,9 @@ dependencies:
   flutter_soloud: ^5.0.2
   emoji_picker_flutter: ^4.5.4
   opencv_dart: ^1.4.5
+  win32: ^6.4.0
+  http: ^1.6.0
+  package_info_plus: ^10.2.1
 
 dev_dependencies:
   flutter_test:

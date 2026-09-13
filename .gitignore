@@ -10,6 +10,9 @@ build/
 # Native build outputs
 native/build/
 native/output/
+
+# Instalador gerado (binário, refeito a cada release)
+installer/output/
 native/third_party/vcpkg/buildtrees/
 native/third_party/vcpkg/downloads/
 native/third_party/vcpkg/packages/

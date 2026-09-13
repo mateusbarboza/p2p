@@ -21,6 +21,7 @@ import 'package:record/record.dart';
 
 import '../camera_capture_isolate.dart';
 import '../data/database.dart' show CallLog;
+import '../screen_capture_isolate.dart';
 import '../tox_events.dart';
 import 'database_provider.dart';
 import 'tox_events_provider.dart';
@@ -28,13 +29,19 @@ import 'tox_manager_provider.dart';
 
 enum CallStatus { idle, outgoingRinging, incomingRinging, active }
 
+/// De onde vem o vídeo que ESTAMOS mandando — só um por vez, nunca os dois
+/// juntos (o ToxAV só tem um canal de vídeo por chamada; câmera e tela de
+/// propósito se excluem mutuamente, ver [CallNotifier.toggleVideo]/
+/// [CallNotifier.toggleScreenShare]).
+enum VideoSource { none, camera, screen }
+
 class CallState {
   const CallState({
     this.status = CallStatus.idle,
     this.contactPublicKeyHex,
     this.muted = false,
     this.outgoing = false,
-    this.sendingVideo = false,
+    this.videoSource = VideoSource.none,
     this.remoteVideoActive = false,
   });
 
@@ -46,8 +53,13 @@ class CallState {
   /// ligou — usado só pra saber como registrar o evento em [CallLogs].
   final bool outgoing;
 
-  /// Nossa própria câmera está ligada e mandando frames.
-  final bool sendingVideo;
+  /// De onde vem o NOSSO vídeo agora (câmera, tela ou nenhum).
+  final VideoSource videoSource;
+
+  /// Nossa própria câmera OU tela está ligada e mandando frames — mantido
+  /// como getter (em vez de campo solto) pra não precisar mexer em
+  /// chat_screen.dart/main.dart, que só liam isso como bool.
+  bool get sendingVideo => videoSource != VideoSource.none;
 
   /// O CONTATO está mandando vídeo agora (bit SENDING_V do
   /// [ToxCallStateEvent]) — independente de nós estarmos mandando ou não.
@@ -56,7 +68,7 @@ class CallState {
   CallState copyWith({
     CallStatus? status,
     bool? muted,
-    bool? sendingVideo,
+    VideoSource? videoSource,
     bool? remoteVideoActive,
   }) {
     return CallState(
@@ -64,7 +76,7 @@ class CallState {
       contactPublicKeyHex: contactPublicKeyHex,
       muted: muted ?? this.muted,
       outgoing: outgoing,
-      sendingVideo: sendingVideo ?? this.sendingVideo,
+      videoSource: videoSource ?? this.videoSource,
       remoteVideoActive: remoteVideoActive ?? this.remoteVideoActive,
     );
   }
@@ -120,6 +132,11 @@ class CallNotifier extends Notifier<CallState> {
   CameraCaptureIsolate? _camera;
   StreamSubscription<CameraFrameData>? _cameraFrameSubscription;
 
+  /// Captura de tela (GDI via win32), mesmo raciocínio de isolate acima —
+  /// ver screen_capture_isolate.dart. `null` quando não está compartilhando.
+  ScreenCaptureIsolate? _screenCapture;
+  StreamSubscription<ScreenFrameData>? _screenFrameSubscription;
+
   /// Frame mais recente recebido do contato — ver [RemoteVideoFrame]. `null`
   /// quando ninguém está mandando vídeo (ou fora de chamada).
   final ValueNotifier<RemoteVideoFrame?> remoteVideoFrame = ValueNotifier(null);
@@ -137,7 +154,13 @@ class CallNotifier extends Notifier<CallState> {
     ref.onDispose(() {
       unawaited(_stopRingtone());
       unawaited(_stopAudio());
-      _stopCamera();
+      // Não usa _stopCamera()/_stopScreenShare() aqui: elas fazem
+      // `state = ...`, e mexer no state DURANTE o dispose do próprio
+      // provider corrompe a lista interna de onDispose do Riverpod
+      // ("Concurrent modification during iteration"). Só libera os
+      // recursos (isolate/assinatura), sem tocar em state.
+      _releaseCameraResources();
+      _releaseScreenResources();
       unawaited(_recorder.dispose());
       remoteVideoFrame.dispose();
       localPreviewFrame.dispose();
@@ -172,6 +195,7 @@ class CallNotifier extends Notifier<CallState> {
         unawaited(_stopRingtone());
         unawaited(_stopAudio());
         _stopCamera();
+        _stopScreenShare();
         remoteVideoFrame.value = null;
         unawaited(_logCall(event.publicKeyHex,
             outgoing: state.outgoing, kind: 'ended'));
@@ -264,6 +288,7 @@ class CallNotifier extends Notifier<CallState> {
     unawaited(_stopRingtone());
     unawaited(_stopAudio());
     _stopCamera();
+    _stopScreenShare();
     remoteVideoFrame.value = null;
     unawaited(_logCall(publicKeyHex, outgoing: state.outgoing, kind: 'ended'));
     state = const CallState();
@@ -280,14 +305,31 @@ class CallNotifier extends Notifier<CallState> {
   /// Liga/desliga a própria câmera durante uma chamada em andamento — ao
   /// contrário do mudo (que só para de mandar frames, silêncio "de graça"),
   /// desligar a câmera precisa realmente soltar o dispositivo (senão a luz
-  /// da webcam fica acesa e outros apps não conseguem usá-la).
+  /// da webcam fica acesa e outros apps não conseguem usá-la). Se o
+  /// compartilhamento de tela estiver ativo, liga a câmera desliga ele
+  /// primeiro — só um vídeo de saída por vez (ver [VideoSource]).
   void toggleVideo() {
     final publicKeyHex = state.contactPublicKeyHex;
     if (publicKeyHex == null || state.status == CallStatus.idle) return;
-    if (state.sendingVideo) {
+    if (state.videoSource == VideoSource.camera) {
       _stopCamera();
     } else {
+      if (state.videoSource == VideoSource.screen) _stopScreenShare();
       unawaited(_startCamera(publicKeyHex));
+    }
+  }
+
+  /// Liga/desliga o compartilhamento da tela — mesmo raciocínio de
+  /// [toggleVideo], mas pra tela em vez da câmera; liga a câmera primeiro
+  /// se ela estiver ativa.
+  void toggleScreenShare() {
+    final publicKeyHex = state.contactPublicKeyHex;
+    if (publicKeyHex == null || state.status == CallStatus.idle) return;
+    if (state.videoSource == VideoSource.screen) {
+      _stopScreenShare();
+    } else {
+      if (state.videoSource == VideoSource.camera) _stopCamera();
+      unawaited(_startScreenShare(publicKeyHex));
     }
   }
 
@@ -296,6 +338,13 @@ class CallNotifier extends Notifier<CallState> {
   static const _kVideoWidth = 320;
   static const _kVideoHeight = 240;
   static const _kVideoCaptureInterval = Duration(milliseconds: 66); // ~15fps
+
+  /// Tela precisa de mais resolução que a câmera (texto tem que dar pra
+  /// ler) mas menos fps (conteúdo de tela muda bem menos por segundo que
+  /// uma webcam) — mantém a banda usada num patamar parecido.
+  static const _kScreenWidth = 960;
+  static const _kScreenHeight = 540;
+  static const _kScreenCaptureInterval = Duration(milliseconds: 125); // ~8fps
 
   Future<void> _startCamera(String publicKeyHex) async {
     if (_camera != null) return;
@@ -313,7 +362,7 @@ class CallNotifier extends Notifier<CallState> {
       return;
     }
     _camera = camera;
-    state = state.copyWith(sendingVideo: true);
+    state = state.copyWith(videoSource: VideoSource.camera);
     // Liga o canal de vídeo no toxav — sem isso, se a chamada começou só
     // de voz (video_bit_rate 0 em toxav_call/toxav_answer),
     // toxav_video_send_frame não tem efeito nenhum e o outro lado nunca
@@ -337,20 +386,73 @@ class CallNotifier extends Notifier<CallState> {
     });
   }
 
-  void _stopCamera() {
+  void _releaseCameraResources() {
     unawaited(_cameraFrameSubscription?.cancel());
     _cameraFrameSubscription = null;
     _camera?.stop();
     _camera = null;
+  }
+
+  void _stopCamera() {
+    _releaseCameraResources();
+    if (state.videoSource != VideoSource.camera) return;
     localPreviewFrame.value = null;
     final publicKeyHex = state.contactPublicKeyHex;
-    if (state.sendingVideo) {
-      state = state.copyWith(sendingVideo: false);
-      if (publicKeyHex != null) {
-        ref
-            .read(toxIsolateManagerProvider)
-            .setCallVideoBitRate(publicKeyHex, 0);
-      }
+    state = state.copyWith(videoSource: VideoSource.none);
+    if (publicKeyHex != null) {
+      ref.read(toxIsolateManagerProvider).setCallVideoBitRate(publicKeyHex, 0);
+    }
+  }
+
+  Future<void> _startScreenShare(String publicKeyHex) async {
+    if (_screenCapture != null) return;
+    final screenCapture = await ScreenCaptureIsolate.start(
+      width: _kScreenWidth,
+      height: _kScreenHeight,
+      captureInterval: _kScreenCaptureInterval,
+    );
+    if (screenCapture == null) return;
+    // Mesmo raciocínio de [_startCamera]: um resultado atrasado não pode
+    // religar tudo sozinho se a chamada já acabou/foi cancelada.
+    if (state.status == CallStatus.idle || _screenCapture != null) {
+      screenCapture.stop();
+      return;
+    }
+    _screenCapture = screenCapture;
+    state = state.copyWith(videoSource: VideoSource.screen);
+    ref
+        .read(toxIsolateManagerProvider)
+        .setCallVideoBitRate(publicKeyHex, kCallVideoBitRateKbps);
+    _screenFrameSubscription = screenCapture.frames.listen((frame) {
+      ref.read(toxIsolateManagerProvider).sendCallVideoFrame(
+            publicKeyHex,
+            frame.width,
+            frame.height,
+            frame.yuvBytes,
+          );
+      localPreviewFrame.value = RemoteVideoFrame(
+        width: frame.width,
+        height: frame.height,
+        bgraBytes: frame.bgraBytes,
+      );
+    });
+  }
+
+  void _releaseScreenResources() {
+    unawaited(_screenFrameSubscription?.cancel());
+    _screenFrameSubscription = null;
+    _screenCapture?.stop();
+    _screenCapture = null;
+  }
+
+  void _stopScreenShare() {
+    _releaseScreenResources();
+    if (state.videoSource != VideoSource.screen) return;
+    localPreviewFrame.value = null;
+    final publicKeyHex = state.contactPublicKeyHex;
+    state = state.copyWith(videoSource: VideoSource.none);
+    if (publicKeyHex != null) {
+      ref.read(toxIsolateManagerProvider).setCallVideoBitRate(publicKeyHex, 0);
     }
   }
 

@@ -29,6 +29,7 @@ import 'providers/contacts_provider.dart';
 import 'providers/database_provider.dart';
 import 'providers/file_transfers_provider.dart';
 import 'providers/messages_provider.dart';
+import 'providers/spell_check_provider.dart';
 import 'providers/tox_events_provider.dart';
 import 'providers/tox_manager_provider.dart';
 import 'tox_events.dart';
@@ -461,6 +462,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                               hintText: 'Mensagem...',
                               border: OutlineInputBorder(),
                             ),
+                            spellCheckConfiguration:
+                                ref.watch(spellCheckProvider)
+                                    ? const SpellCheckConfiguration()
+                                    : null,
                             onSubmitted: (_) => _send(),
                           ),
                         ),

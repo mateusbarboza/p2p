@@ -279,8 +279,13 @@ class _AccountSessionRootState extends ConsumerState<_AccountSessionRoot> {
   void _logoutAndStopNetworking() {
     unawaited(
       ref.read(toxIsolateManagerProvider).stop().then((_) {
-        _invalidateAccountScopedProviders();
-        widget.onLogout();
+        // Mesmo que invalidar algum provider falhe, o retorno à tela de
+        // login (widget.onLogout()) não pode ficar refém disso.
+        try {
+          _invalidateAccountScopedProviders();
+        } finally {
+          widget.onLogout();
+        }
       }),
     );
   }
@@ -653,11 +658,27 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             if (callState.status != CallStatus.idle)
               IconButton(
                 icon: Icon(
-                  callState.sendingVideo ? Icons.videocam : Icons.videocam_off,
+                  callState.videoSource == VideoSource.camera
+                      ? Icons.videocam
+                      : Icons.videocam_off,
                 ),
-                tooltip:
-                    callState.sendingVideo ? 'Desligar câmera' : 'Ligar câmera',
+                tooltip: callState.videoSource == VideoSource.camera
+                    ? 'Desligar câmera'
+                    : 'Ligar câmera',
                 onPressed: () => ref.read(callProvider.notifier).toggleVideo(),
+              ),
+            if (callState.status != CallStatus.idle)
+              IconButton(
+                icon: Icon(
+                  callState.videoSource == VideoSource.screen
+                      ? Icons.stop_screen_share
+                      : Icons.screen_share,
+                ),
+                tooltip: callState.videoSource == VideoSource.screen
+                    ? 'Parar compartilhamento'
+                    : 'Compartilhar tela',
+                onPressed: () =>
+                    ref.read(callProvider.notifier).toggleScreenShare(),
               ),
             IconButton(
               icon: const Icon(Icons.call_end),
