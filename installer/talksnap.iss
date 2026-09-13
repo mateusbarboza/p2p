@@ -16,7 +16,7 @@
 ; programa diferente instalado do lado.
 #define AppId "{{E8618B1E-2A3D-4C3A-9FED-C25994B63F9E}"
 #define AppName "Talksnap"
-#define AppVersion "0.1.0"
+#define AppVersion "0.2.0"
 #define AppPublisher "Talksnap"
 #define ReleaseDir "..\build\windows\x64\runner\Release"
 
