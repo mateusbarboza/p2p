@@ -7,6 +7,12 @@ build/
 *.lock
 !pubspec.lock
 
+# Localização: regenerado automaticamente (flutter build/run/pub get, por
+# causa de `generate: true` no pubspec.yaml) a partir dos .arb em lib/l10n/
+# — só os .arb (fonte) são versionados.
+lib/l10n/app_localizations*.dart
+l10n_untranslated.txt
+
 # Native build outputs
 native/build/
 native/output/

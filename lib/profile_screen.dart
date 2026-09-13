@@ -11,9 +11,14 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:record/record.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'identity_backup.dart';
+import 'l10n/app_localizations.dart';
+import 'providers/av_device_settings_provider.dart';
+import 'providers/file_receive_settings_provider.dart';
+import 'providers/language_provider.dart';
 import 'providers/self_profile_provider.dart';
 import 'providers/spell_check_provider.dart';
 import 'providers/theme_mode_provider.dart';
@@ -58,11 +63,23 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   bool _exportingBackup = false;
   String? _savedataPath;
 
+  /// `null` enquanto ainda não terminou de carregar (mostra um spinner no
+  /// lugar do dropdown); a enumeração em si é assíncrona (`record` consulta
+  /// o sistema operacional).
+  List<InputDevice>? _inputDevices;
+
   @override
   void initState() {
     super.initState();
     resolveSavedataFile().then((file) {
       if (mounted) setState(() => _savedataPath = file.path);
+    });
+    AudioRecorder().listInputDevices().then((devices) {
+      if (mounted) setState(() => _inputDevices = devices);
+    }).catchError((_) {
+      // Enumeração pode falhar em alguns sistemas — sem lista, o usuário
+      // só fica sem opção de troca de microfone (continua no padrão).
+      if (mounted) setState(() => _inputDevices = const []);
     });
   }
 
@@ -78,7 +95,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     if (path == null) return;
     Clipboard.setData(ClipboardData(text: path));
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Caminho copiado!')),
+      SnackBar(content: Text(AppLocalizations.of(context)!.pathCopied)),
     );
   }
 
@@ -92,7 +109,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Não foi possível abrir a pasta: $e')),
+        SnackBar(
+            content:
+                Text(AppLocalizations.of(context)!.errorOpeningFolder('$e'))),
       );
     }
   }
@@ -108,7 +127,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     ref.read(selfProfileProvider.notifier).updateNameAndStatus(
         _nameController.text.trim(), _statusController.text.trim());
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Perfil atualizado!')),
+      SnackBar(content: Text(AppLocalizations.of(context)!.profileUpdated)),
     );
   }
 
@@ -127,17 +146,20 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         bytes: bytes,
       );
       if (!mounted) return;
+      final l10n = AppLocalizations.of(context)!;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            savedUri != null ? 'Backup salvo!' : 'Backup cancelado.',
+            savedUri != null ? l10n.backupSaved : l10n.backupCancelled,
           ),
         ),
       );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Falha ao gerar backup: $e')),
+        SnackBar(
+            content:
+                Text(AppLocalizations.of(context)!.errorBackupFailed('$e'))),
       );
     } finally {
       if (mounted) setState(() => _exportingBackup = false);
@@ -149,31 +171,33 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     final newController = TextEditingController();
     final confirmController = TextEditingController();
     String? dialogError;
+    final l10n = AppLocalizations.of(context)!;
 
     await showDialog<void>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Alterar senha'),
+          title: Text(l10n.changePasswordTitle),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
                 controller: currentController,
-                decoration: const InputDecoration(labelText: 'Senha atual'),
+                decoration:
+                    InputDecoration(labelText: l10n.currentPasswordLabel),
                 obscureText: true,
               ),
               const SizedBox(height: 8),
               TextField(
                 controller: newController,
-                decoration: const InputDecoration(labelText: 'Nova senha'),
+                decoration: InputDecoration(labelText: l10n.newPasswordLabel),
                 obscureText: true,
               ),
               const SizedBox(height: 8),
               TextField(
                 controller: confirmController,
                 decoration:
-                    const InputDecoration(labelText: 'Confirmar nova senha'),
+                    InputDecoration(labelText: l10n.confirmNewPasswordLabel),
                 obscureText: true,
               ),
               if (dialogError != null) ...[
@@ -188,33 +212,35 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Cancelar'),
+              child: Text(l10n.cancelAction),
             ),
             FilledButton(
               onPressed: () async {
                 if (newController.text.isEmpty) {
-                  setDialogState(() => dialogError = 'Informe a nova senha.');
+                  setDialogState(
+                      () => dialogError = l10n.errorEnterNewPassword);
                   return;
                 }
                 if (newController.text != confirmController.text) {
                   setDialogState(
-                      () => dialogError = 'As senhas não coincidem.');
+                      () => dialogError = l10n.errorPasswordsDontMatch);
                   return;
                 }
                 final ok = await widget.onChangePassword(
                     currentController.text, newController.text);
                 if (!context.mounted) return;
                 if (!ok) {
-                  setDialogState(() => dialogError = 'Senha atual incorreta.');
+                  setDialogState(
+                      () => dialogError = l10n.errorWrongCurrentPassword);
                   return;
                 }
                 Navigator.pop(context);
                 if (!mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Senha alterada!')),
+                  SnackBar(content: Text(l10n.passwordChanged)),
                 );
               },
-              child: const Text('Salvar'),
+              child: Text(l10n.saveAction),
             ),
           ],
         ),
@@ -225,19 +251,20 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   Future<void> _showRenameAccountDialog() async {
     final controller = TextEditingController(text: widget.currentUsername);
     String? dialogError;
+    final l10n = AppLocalizations.of(context)!;
 
     await showDialog<void>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Renomear usuário'),
+          title: Text(l10n.renameAccountTitle),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
                 controller: controller,
                 autofocus: true,
-                decoration: const InputDecoration(labelText: 'Usuário'),
+                decoration: InputDecoration(labelText: l10n.usernameLabel),
               ),
               if (dialogError != null) ...[
                 const SizedBox(height: 8),
@@ -251,13 +278,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Cancelar'),
+              child: Text(l10n.cancelAction),
             ),
             FilledButton(
               onPressed: () async {
                 final newUsername = controller.text.trim();
                 if (newUsername.isEmpty) {
-                  setDialogState(() => dialogError = 'Informe um usuário.');
+                  setDialogState(() => dialogError = l10n.errorEnterUsername);
                   return;
                 }
                 await widget.onRenameAccount(newUsername);
@@ -265,10 +292,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 Navigator.pop(context);
                 if (!mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Usuário renomeado!')),
+                  SnackBar(content: Text(l10n.usernameChanged)),
                 );
               },
-              child: const Text('Salvar'),
+              child: Text(l10n.saveAction),
             ),
           ],
         ),
@@ -280,27 +307,24 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     final passwordController = TextEditingController();
     String? dialogError;
     bool deleting = false;
+    final l10n = AppLocalizations.of(context)!;
 
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Excluir conta?'),
+          title: Text(l10n.deleteAccountTitle),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text(
-                'Isso apaga essa identidade, contatos, mensagens e grupos '
-                'deste dispositivo PARA SEMPRE — sem backup, não tem como '
-                'recuperar depois. Digite sua senha para confirmar.',
-              ),
+              Text(l10n.deleteAccountWarning),
               const SizedBox(height: 12),
               TextField(
                 controller: passwordController,
                 autofocus: true,
                 obscureText: true,
-                decoration: const InputDecoration(labelText: 'Senha'),
+                decoration: InputDecoration(labelText: l10n.passwordLabel),
               ),
               if (dialogError != null) ...[
                 const SizedBox(height: 8),
@@ -314,7 +338,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           actions: [
             TextButton(
               onPressed: deleting ? null : () => Navigator.pop(context),
-              child: const Text('Cancelar'),
+              child: Text(l10n.cancelAction),
             ),
             FilledButton(
               style: FilledButton.styleFrom(
@@ -324,7 +348,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   ? null
                   : () async {
                       if (passwordController.text.isEmpty) {
-                        setDialogState(() => dialogError = 'Informe a senha.');
+                        setDialogState(
+                            () => dialogError = l10n.errorEnterPassword);
                         return;
                       }
                       setDialogState(() {
@@ -343,7 +368,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       }
                       Navigator.pop(context);
                     },
-              child: Text(deleting ? 'Excluindo...' : 'Excluir'),
+              child: Text(
+                  deleting ? l10n.deletingAction : l10n.deleteAccountAction),
             ),
           ],
         ),
@@ -352,22 +378,20 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   }
 
   Future<void> _confirmLogout() async {
+    final l10n = AppLocalizations.of(context)!;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Sair?'),
-        content: const Text(
-          'Você volta pra tela de login. Seu usuário e senha continuam salvos '
-          'neste dispositivo.',
-        ),
+        title: Text(l10n.logoutTitle),
+        content: Text(l10n.logoutBody),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
+            child: Text(l10n.cancelAction),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Sair'),
+            child: Text(l10n.logoutAction),
           ),
         ],
       ),
@@ -381,17 +405,16 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     await ref.read(updateProvider.notifier).checkNow();
     if (!mounted) return;
     final state = ref.read(updateProvider);
+    final l10n = AppLocalizations.of(context)!;
     if (state.status == UpdateCheckStatus.upToDate) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            'Você já está na versão mais recente (${state.currentVersion}).',
-          ),
+          content: Text(l10n.upToDateVersion(state.currentVersion)),
         ),
       );
     } else if (state.status == UpdateCheckStatus.error) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(state.errorMessage ?? 'Erro desconhecido.')),
+        SnackBar(content: Text(state.errorMessage ?? l10n.unknownError)),
       );
     }
   }
@@ -405,20 +428,18 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   }
 
   Widget _buildUpdateSection(BuildContext context, UpdateCheckState state) {
+    final l10n = AppLocalizations.of(context)!;
     final subtitle = switch (state.status) {
-      UpdateCheckStatus.idle =>
-        'Toque para checar se há uma versão mais nova do Talksnap.',
-      UpdateCheckStatus.checking => 'Verificando...',
-      UpdateCheckStatus.upToDate =>
-        'Você está na versão mais recente (${state.currentVersion}).',
+      UpdateCheckStatus.idle => l10n.checkUpdatesTapHint,
+      UpdateCheckStatus.checking => l10n.checkingUpdates,
+      UpdateCheckStatus.upToDate => l10n.upToDateVersion(state.currentVersion),
       UpdateCheckStatus.available =>
-        'Nova versão disponível: ${state.latestVersion}.',
-      UpdateCheckStatus.error =>
-        state.errorMessage ?? 'Não foi possível verificar atualizações.',
+        l10n.updateAvailable(state.latestVersion ?? ''),
+      UpdateCheckStatus.error => state.errorMessage ?? l10n.updateCheckError,
     };
     return ListTile(
       contentPadding: EdgeInsets.zero,
-      title: const Text('Verificar atualizações'),
+      title: Text(l10n.checkUpdatesTitle),
       subtitle: Text(subtitle),
       trailing: state.status == UpdateCheckStatus.checking
           ? const SizedBox(
@@ -429,11 +450,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           : state.status == UpdateCheckStatus.available
               ? FilledButton(
                   onPressed: () => _openReleasePage(state.releaseUrl),
-                  child: const Text('Atualizar'),
+                  child: Text(l10n.updateAction),
                 )
               : OutlinedButton(
                   onPressed: _checkForUpdates,
-                  child: const Text('Verificar'),
+                  child: Text(l10n.checkAction),
                 ),
     );
   }
@@ -444,6 +465,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     final themeMode = ref.watch(themeModeProvider);
     final spellCheckEnabled = ref.watch(spellCheckProvider);
     final updateState = ref.watch(updateProvider);
+    final fileReceiveSettings = ref.watch(fileReceiveSettingsProvider);
+    final currentLanguage = ref.watch(languageProvider);
+    final avDeviceSettings = ref.watch(avDeviceSettingsProvider);
+    final l10n = AppLocalizations.of(context)!;
 
     // Só inicializa os controllers uma vez com o que já veio do toxcore —
     // depois disso, edição é livre (não sobrescrever o que o usuário está
@@ -455,7 +480,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Meu perfil')),
+      appBar: AppBar(title: Text(l10n.myProfileTitle)),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 420),
@@ -488,41 +513,42 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               const SizedBox(height: 24),
               TextField(
                 controller: _nameController,
-                decoration: const InputDecoration(
-                  labelText: 'Nome',
-                  border: OutlineInputBorder(),
+                decoration: InputDecoration(
+                  labelText: l10n.nameLabel,
+                  border: const OutlineInputBorder(),
                 ),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: _statusController,
-                decoration: const InputDecoration(
-                  labelText: 'Descrição (status)',
-                  border: OutlineInputBorder(),
+                decoration: InputDecoration(
+                  labelText: l10n.statusDescriptionLabel,
+                  border: const OutlineInputBorder(),
                 ),
                 maxLength: 100,
               ),
               const SizedBox(height: 12),
-              FilledButton(onPressed: _save, child: const Text('Salvar')),
+              FilledButton(onPressed: _save, child: Text(l10n.saveAction)),
               const Divider(height: 40),
-              Text('Aparência', style: Theme.of(context).textTheme.titleMedium),
+              Text(l10n.appearanceTitle,
+                  style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 8),
               SegmentedButton<AppThemeMode>(
-                segments: const [
+                segments: [
                   ButtonSegment(
                     value: AppThemeMode.light,
-                    label: Text('Claro'),
-                    icon: Icon(Icons.light_mode_outlined),
+                    label: Text(l10n.lightTheme),
+                    icon: const Icon(Icons.light_mode_outlined),
                   ),
                   ButtonSegment(
                     value: AppThemeMode.dark,
-                    label: Text('Escuro'),
-                    icon: Icon(Icons.dark_mode_outlined),
+                    label: Text(l10n.darkTheme),
+                    icon: const Icon(Icons.dark_mode_outlined),
                   ),
                   ButtonSegment(
                     value: AppThemeMode.system,
-                    label: Text('Sistema'),
-                    icon: Icon(Icons.settings_suggest_outlined),
+                    label: Text(l10n.systemTheme),
+                    icon: const Icon(Icons.settings_suggest_outlined),
                   ),
                 ],
                 selected: {themeMode},
@@ -531,28 +557,144 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     .setMode(selection.first),
               ),
               const Divider(height: 40),
-              Text('Configurações',
+              Text(l10n.settingsTitle,
                   style: Theme.of(context).textTheme.titleMedium),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
-                title: const Text('Verificar ortografia'),
-                subtitle: const Text(
-                  'Sublinha palavras que o corretor do sistema não reconhece '
-                  'ao digitar mensagens.',
-                ),
+                title: Text(l10n.spellCheckTitle),
+                subtitle: Text(l10n.spellCheckSubtitle),
                 value: spellCheckEnabled,
                 onChanged: (value) =>
                     ref.read(spellCheckProvider.notifier).setEnabled(value),
               ),
               const SizedBox(height: 8),
               _buildUpdateSection(context, updateState),
+              const Divider(height: 20),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(l10n.languageTitle),
+                subtitle: Text(l10n.languageSubtitle),
+                trailing: DropdownButton<AppLanguage>(
+                  value: currentLanguage,
+                  onChanged: (value) {
+                    if (value == null) return;
+                    ref.read(languageProvider.notifier).setLanguage(value);
+                  },
+                  items: [
+                    for (final language in AppLanguage.values)
+                      DropdownMenuItem(
+                        value: language,
+                        child: Text(language.label),
+                      ),
+                  ],
+                ),
+              ),
+              const Divider(height: 20),
+              Text(l10n.audioVideoTitle,
+                  style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 12),
+              Text(l10n.microphoneLabel,
+                  style: Theme.of(context).textTheme.bodyLarge),
+              Text(l10n.microphoneSubtitle,
+                  style: Theme.of(context).textTheme.bodySmall),
+              const SizedBox(height: 8),
+              _inputDevices == null
+                  ? const LinearProgressIndicator()
+                  : SizedBox(
+                      width: double.infinity,
+                      child: DropdownButton<String?>(
+                        isExpanded: true,
+                        value: avDeviceSettings.microphone?.id,
+                        onChanged: (id) {
+                          final device = id == null
+                              ? null
+                              : _inputDevices!
+                                  .where((d) => d.id == id)
+                                  .firstOrNull;
+                          ref
+                              .read(avDeviceSettingsProvider.notifier)
+                              .setMicrophone(device);
+                        },
+                        items: [
+                          DropdownMenuItem(
+                            value: null,
+                            child: Text(l10n.systemDefaultOption),
+                          ),
+                          for (final device in _inputDevices!)
+                            DropdownMenuItem(
+                              value: device.id,
+                              child: Text(device.label,
+                                  overflow: TextOverflow.ellipsis),
+                            ),
+                        ],
+                      ),
+                    ),
+              const SizedBox(height: 16),
+              Text(l10n.cameraLabel,
+                  style: Theme.of(context).textTheme.bodyLarge),
+              Text(l10n.cameraSubtitle,
+                  style: Theme.of(context).textTheme.bodySmall),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: DropdownButton<int>(
+                  isExpanded: true,
+                  value: avDeviceSettings.cameraIndex,
+                  onChanged: (index) {
+                    if (index == null) return;
+                    ref
+                        .read(avDeviceSettingsProvider.notifier)
+                        .setCameraIndex(index);
+                  },
+                  items: [
+                    for (var i = 0; i < 5; i++)
+                      DropdownMenuItem(
+                        value: i,
+                        child: Text(l10n.cameraIndexOption(i)),
+                      ),
+                  ],
+                ),
+              ),
+              const Divider(height: 20),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(l10n.autoAcceptFilesTitle),
+                subtitle: Text(l10n.autoAcceptFilesSubtitle),
+                value: fileReceiveSettings.autoAccept,
+                onChanged: (value) => ref
+                    .read(fileReceiveSettingsProvider.notifier)
+                    .setAutoAccept(value),
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(l10n.maxFileSizeTitle),
+                subtitle: Text(l10n.maxFileSizeSubtitle),
+                trailing: DropdownButton<int>(
+                  value: fileReceiveSettings.maxSizeMb,
+                  onChanged: (value) {
+                    if (value == null) return;
+                    ref
+                        .read(fileReceiveSettingsProvider.notifier)
+                        .setMaxSizeMb(value);
+                  },
+                  items: [
+                    DropdownMenuItem(value: 0, child: Text(l10n.noLimitOption)),
+                    const DropdownMenuItem(value: 10, child: Text('10 MB')),
+                    const DropdownMenuItem(value: 25, child: Text('25 MB')),
+                    const DropdownMenuItem(value: 50, child: Text('50 MB')),
+                    const DropdownMenuItem(value: 100, child: Text('100 MB')),
+                    const DropdownMenuItem(value: 250, child: Text('250 MB')),
+                    const DropdownMenuItem(value: 500, child: Text('500 MB')),
+                    const DropdownMenuItem(value: 1000, child: Text('1 GB')),
+                  ],
+                ),
+              ),
               const Divider(height: 40),
-              Text('Segurança', style: Theme.of(context).textTheme.titleMedium),
+              Text(l10n.securityTitle,
+                  style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 4),
               Text(
-                'Se você formatar o PC sem esse backup, sua identidade e '
-                'contatos se perdem para sempre — não existe "recuperar '
-                'conta" num sistema P2P sem servidor.',
+                l10n.backupWarning,
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: 8),
@@ -561,13 +703,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 icon: const Icon(Icons.backup_outlined),
                 label: Text(
                   _exportingBackup
-                      ? 'Gerando backup...'
-                      : 'Fazer backup da identidade',
+                      ? l10n.generatingBackup
+                      : l10n.makeIdentityBackup,
                 ),
               ),
               const SizedBox(height: 12),
               Text(
-                'Arquivo de identidade (.tox) desta conta',
+                l10n.identityFileLabel,
                 style: Theme.of(context).textTheme.labelMedium,
               ),
               const SizedBox(height: 4),
@@ -577,7 +719,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     child: InkWell(
                       onTap: _savedataPath == null ? null : _openSavedataFolder,
                       child: Text(
-                        _savedataPath ?? 'Carregando...',
+                        _savedataPath ?? l10n.loadingAction,
                         style: TextStyle(
                           fontFamily: 'monospace',
                           fontSize: 12,
@@ -593,39 +735,40 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   ),
                   IconButton(
                     icon: const Icon(Icons.folder_open_outlined, size: 18),
-                    tooltip: 'Abrir pasta',
+                    tooltip: l10n.openFolderTooltip,
                     onPressed:
                         _savedataPath == null ? null : _openSavedataFolder,
                   ),
                   IconButton(
                     icon: const Icon(Icons.copy, size: 18),
-                    tooltip: 'Copiar caminho',
+                    tooltip: l10n.copyPathTooltip,
                     onPressed: _savedataPath == null ? null : _copySavedataPath,
                   ),
                 ],
               ),
               const Divider(height: 40),
-              Text('Conta', style: Theme.of(context).textTheme.titleMedium),
+              Text(l10n.accountTitle,
+                  style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 4),
-              Text('Usuário: ${widget.currentUsername}',
+              Text(l10n.usernameWithValue(widget.currentUsername),
                   style: Theme.of(context).textTheme.bodySmall),
               const SizedBox(height: 8),
               OutlinedButton.icon(
                 onPressed: _showRenameAccountDialog,
                 icon: const Icon(Icons.edit_outlined),
-                label: const Text('Renomear usuário'),
+                label: Text(l10n.renameUsernameAction),
               ),
               const SizedBox(height: 8),
               OutlinedButton.icon(
                 onPressed: _showChangePasswordDialog,
                 icon: const Icon(Icons.password_outlined),
-                label: const Text('Alterar senha'),
+                label: Text(l10n.changePasswordAction),
               ),
               const SizedBox(height: 8),
               OutlinedButton.icon(
                 onPressed: _confirmLogout,
                 icon: const Icon(Icons.logout),
-                label: const Text('Sair'),
+                label: Text(l10n.logoutAction),
               ),
               const SizedBox(height: 8),
               OutlinedButton.icon(
@@ -635,7 +778,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   side: BorderSide(color: Theme.of(context).colorScheme.error),
                 ),
                 icon: const Icon(Icons.delete_forever_outlined),
-                label: const Text('Excluir conta'),
+                label: Text(l10n.deleteAccountMenuAction),
               ),
             ],
           ),

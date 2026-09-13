@@ -18,6 +18,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'l10n/app_localizations.dart';
 import 'providers/self_profile_provider.dart';
 import 'providers/self_status_provider.dart';
 
@@ -52,7 +53,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   void _copyTalksnapId(String talksnapId) {
     Clipboard.setData(ClipboardData(text: talksnapId));
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Talksnap ID copiado!')),
+      SnackBar(content: Text(AppLocalizations.of(context)!.talksnapIdCopied)),
     );
   }
 
@@ -70,6 +71,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   @override
   Widget build(BuildContext context) {
     final talksnapId = ref.watch(selfStatusProvider).talksnapId;
+    final l10n = AppLocalizations.of(context)!;
 
     return Scaffold(
       body: Center(
@@ -81,13 +83,13 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  'Bem-vindo(a) ao Talksnap!',
+                  l10n.welcomeTitleExclamation,
                   style: Theme.of(context).textTheme.headlineSmall,
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Sua identidade P2P já foi criada. Escolha um nome antes de começar.',
+                  l10n.onboardingIntro,
                   style: Theme.of(context).textTheme.bodyMedium,
                   textAlign: TextAlign.center,
                 ),
@@ -115,18 +117,18 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                 TextField(
                   controller: _nameController,
                   autofocus: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Seu nome',
-                    border: OutlineInputBorder(),
+                  decoration: InputDecoration(
+                    labelText: l10n.yourName,
+                    border: const OutlineInputBorder(),
                   ),
                   onSubmitted: (_) => _submit(),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: _statusController,
-                  decoration: const InputDecoration(
-                    labelText: 'Descrição (opcional)',
-                    border: OutlineInputBorder(),
+                  decoration: InputDecoration(
+                    labelText: l10n.descriptionOptional,
+                    border: const OutlineInputBorder(),
                   ),
                   maxLength: 100,
                   onSubmitted: (_) => _submit(),
@@ -135,15 +137,15 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                 FilledButton(
                   onPressed: _submitting ? null : _submit,
                   child: Text(_submitting
-                      ? 'Entrando...'
-                      : 'Começar a usar o Talksnap'),
+                      ? l10n.enteringAction
+                      : l10n.startUsingTalksnap),
                 ),
                 const Divider(height: 40),
-                Text('Seu Talksnap ID',
+                Text(l10n.yourTalksnapId,
                     style: Theme.of(context).textTheme.titleSmall),
                 const SizedBox(height: 4),
                 Text(
-                  'Compartilhe esse código para as pessoas te adicionarem.',
+                  l10n.shareThisCodeNotice,
                   style: Theme.of(context).textTheme.bodySmall,
                   textAlign: TextAlign.center,
                 ),
@@ -153,14 +155,14 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                   children: [
                     Flexible(
                       child: SelectableText(
-                        talksnapId ?? 'Gerando identidade P2P...',
+                        talksnapId ?? l10n.generatingIdentity,
                         style: const TextStyle(
                             fontFamily: 'monospace', fontSize: 12),
                       ),
                     ),
                     IconButton(
                       icon: const Icon(Icons.copy, size: 18),
-                      tooltip: 'Copiar ID',
+                      tooltip: l10n.copyId,
                       onPressed: talksnapId == null
                           ? null
                           : () => _copyTalksnapId(talksnapId),

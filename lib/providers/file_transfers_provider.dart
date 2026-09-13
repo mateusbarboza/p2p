@@ -13,7 +13,9 @@ import '../data/database.dart' show FileTransfer;
 import '../data/file_transfers_repository.dart';
 import '../tox_events.dart';
 import 'database_provider.dart';
+import 'file_receive_settings_provider.dart';
 import 'tox_events_provider.dart';
+import 'tox_manager_provider.dart';
 
 class FileTransfersSyncNotifier extends Notifier<void> {
   /// Id da linha (Drift) de cada transferência ativa, chaveado por
@@ -63,6 +65,7 @@ class FileTransfersSyncNotifier extends Notifier<void> {
       final id = await future;
       _activeRowIds[key] = id;
       _pendingInserts.remove(key);
+      _maybeAutoAccept(event);
       return;
     }
 
@@ -87,6 +90,23 @@ class FileTransfersSyncNotifier extends Notifier<void> {
     if (terminalPhases.contains(event.phase)) {
       _activeRowIds.remove(key);
     }
+  }
+
+  /// Aceita automaticamente um pedido de arquivo RECEBIDO (nunca um envio
+  /// nosso) conforme a preferência em Perfil > Configurações — respeita o
+  /// limite de tamanho quando configurado (arquivo maior fica pendente pro
+  /// usuário aceitar/recusar manualmente na tela de chat, como já era).
+  void _maybeAutoAccept(ToxFileTransferEvent event) {
+    if (event.outgoing || event.fileNumber == null) return;
+    final settings = ref.read(fileReceiveSettingsProvider);
+    if (!settings.autoAccept) return;
+    final maxBytes = settings.maxSizeBytes;
+    if (maxBytes != null && (event.totalBytes ?? 0) > maxBytes) return;
+    ref.read(toxIsolateManagerProvider).respondFileControl(
+          event.publicKeyHex,
+          event.fileNumber!,
+          ToxFileControlAction.resume,
+        );
   }
 }
 

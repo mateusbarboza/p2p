@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'identity_backup.dart';
+import 'l10n/app_localizations.dart';
 import 'providers/local_auth_provider.dart';
 
 enum _Mode { choice, register, login, import }
@@ -65,16 +66,17 @@ class _LocalAuthScreenState extends ConsumerState<LocalAuthScreen> {
     final password = _passwordController.text;
     final confirmPassword = _confirmPasswordController.text;
 
+    final l10n = AppLocalizations.of(context)!;
     if (username.isEmpty) {
-      setState(() => _error = 'Informe um usuário.');
+      setState(() => _error = l10n.errorEnterUsername);
       return;
     }
     if (password.isEmpty) {
-      setState(() => _error = 'Informe uma senha.');
+      setState(() => _error = l10n.errorEnterPassword);
       return;
     }
     if (password != confirmPassword) {
-      setState(() => _error = 'As senhas não coincidem.');
+      setState(() => _error = l10n.errorPasswordsDontMatch);
       return;
     }
 
@@ -96,21 +98,22 @@ class _LocalAuthScreenState extends ConsumerState<LocalAuthScreen> {
     final password = _passwordController.text;
     final confirmPassword = _confirmPasswordController.text;
     final backupPath = _pickedBackupPath;
+    final l10n = AppLocalizations.of(context)!;
 
     if (backupPath == null) {
-      setState(() => _error = 'Escolha o arquivo de backup (.tox).');
+      setState(() => _error = l10n.errorChooseBackupFile);
       return;
     }
     if (username.isEmpty) {
-      setState(() => _error = 'Informe um usuário.');
+      setState(() => _error = l10n.errorEnterUsername);
       return;
     }
     if (password.isEmpty) {
-      setState(() => _error = 'Informe uma senha.');
+      setState(() => _error = l10n.errorEnterPassword);
       return;
     }
     if (password != confirmPassword) {
-      setState(() => _error = 'As senhas não coincidem.');
+      setState(() => _error = l10n.errorPasswordsDontMatch);
       return;
     }
 
@@ -133,7 +136,7 @@ class _LocalAuthScreenState extends ConsumerState<LocalAuthScreen> {
       if (!mounted) return;
       setState(() {
         _submitting = false;
-        _error = 'Não foi possível importar esse arquivo: $e';
+        _error = l10n.errorImportFailed(e.toString());
       });
     }
   }
@@ -152,7 +155,7 @@ class _LocalAuthScreenState extends ConsumerState<LocalAuthScreen> {
     if (!mounted) return;
     setState(() {
       _submitting = false;
-      if (!ok) _error = 'Senha incorreta.';
+      if (!ok) _error = AppLocalizations.of(context)!.errorWrongPassword;
     });
   }
 
@@ -187,6 +190,7 @@ class _LocalAuthScreenState extends ConsumerState<LocalAuthScreen> {
   }
 
   Widget _buildChoice(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final hasAccounts = ref.watch(localAuthProvider).accounts.isNotEmpty;
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -194,14 +198,13 @@ class _LocalAuthScreenState extends ConsumerState<LocalAuthScreen> {
         const Icon(Icons.lock_person_outlined, size: 48),
         const SizedBox(height: 16),
         Text(
-          'Bem-vindo(a) ao Talksnap',
+          l10n.welcomeTitle,
           style: Theme.of(context).textTheme.headlineSmall,
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 8),
         Text(
-          'Essa senha só protege o app neste dispositivo, não tem relação '
-          'com sua identidade P2P nem viaja pela rede.',
+          l10n.localPasswordNotice,
           style: Theme.of(context).textTheme.bodySmall,
           textAlign: TextAlign.center,
         ),
@@ -209,7 +212,7 @@ class _LocalAuthScreenState extends ConsumerState<LocalAuthScreen> {
         FilledButton.icon(
           onPressed: () => _goTo(_Mode.register),
           icon: const Icon(Icons.person_add_alt_1),
-          label: const Text('Criar conta'),
+          label: Text(l10n.createAccount),
         ),
         const SizedBox(height: 12),
         Row(
@@ -218,7 +221,7 @@ class _LocalAuthScreenState extends ConsumerState<LocalAuthScreen> {
               child: OutlinedButton.icon(
                 onPressed: hasAccounts ? () => _goTo(_Mode.login) : null,
                 icon: const Icon(Icons.login),
-                label: const Text('Entrar'),
+                label: Text(l10n.signIn),
               ),
             ),
             const SizedBox(width: 8),
@@ -226,7 +229,7 @@ class _LocalAuthScreenState extends ConsumerState<LocalAuthScreen> {
               child: OutlinedButton.icon(
                 onPressed: () => _goTo(_Mode.import),
                 icon: const Icon(Icons.file_upload_outlined),
-                label: const Text('Importar'),
+                label: Text(l10n.importAction),
               ),
             ),
           ],
@@ -234,7 +237,7 @@ class _LocalAuthScreenState extends ConsumerState<LocalAuthScreen> {
         if (!hasAccounts) ...[
           const SizedBox(height: 8),
           Text(
-            'Nenhuma conta cadastrada ainda neste dispositivo.',
+            l10n.noAccountsYet,
             style: Theme.of(context).textTheme.bodySmall,
             textAlign: TextAlign.center,
           ),
@@ -244,34 +247,36 @@ class _LocalAuthScreenState extends ConsumerState<LocalAuthScreen> {
   }
 
   Widget _buildRegisterForm(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         _backButton(),
-        Text('Criar conta', style: Theme.of(context).textTheme.headlineSmall),
+        Text(l10n.createAccount,
+            style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 24),
         TextField(
           controller: _usernameController,
-          decoration: const InputDecoration(
-            labelText: 'Usuário',
-            border: OutlineInputBorder(),
+          decoration: InputDecoration(
+            labelText: l10n.usernameLabel,
+            border: const OutlineInputBorder(),
           ),
         ),
         const SizedBox(height: 12),
         TextField(
           controller: _passwordController,
-          decoration: const InputDecoration(
-            labelText: 'Senha',
-            border: OutlineInputBorder(),
+          decoration: InputDecoration(
+            labelText: l10n.passwordLabel,
+            border: const OutlineInputBorder(),
           ),
           obscureText: true,
         ),
         const SizedBox(height: 12),
         TextField(
           controller: _confirmPasswordController,
-          decoration: const InputDecoration(
-            labelText: 'Confirmar senha',
-            border: OutlineInputBorder(),
+          decoration: InputDecoration(
+            labelText: l10n.confirmPasswordLabel,
+            border: const OutlineInputBorder(),
           ),
           obscureText: true,
           onSubmitted: (_) => _submitRegister(),
@@ -287,23 +292,23 @@ class _LocalAuthScreenState extends ConsumerState<LocalAuthScreen> {
         const SizedBox(height: 24),
         FilledButton(
           onPressed: _submitting ? null : _submitRegister,
-          child: Text(_submitting ? 'Aguarde...' : 'Criar conta'),
+          child: Text(_submitting ? l10n.pleaseWait : l10n.createAccount),
         ),
       ],
     );
   }
 
   Widget _buildImportForm(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         _backButton(),
-        Text('Importar identidade',
+        Text(l10n.importIdentityTitle,
             style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 8),
         Text(
-          'Escolha o arquivo de backup (.tox) trazido de outro dispositivo e '
-          'defina um usuário/senha locais para proteger o acesso a ele aqui.',
+          l10n.importIdentityDescription,
           style: Theme.of(context).textTheme.bodySmall,
           textAlign: TextAlign.center,
         ),
@@ -313,33 +318,33 @@ class _LocalAuthScreenState extends ConsumerState<LocalAuthScreen> {
           icon: const Icon(Icons.folder_open_outlined),
           label: Text(
             _pickedBackupPath == null
-                ? 'Escolher arquivo .tox'
+                ? l10n.chooseToxFile
                 : _pickedBackupPath!.split(Platform.pathSeparator).last,
           ),
         ),
         const SizedBox(height: 16),
         TextField(
           controller: _usernameController,
-          decoration: const InputDecoration(
-            labelText: 'Usuário',
-            border: OutlineInputBorder(),
+          decoration: InputDecoration(
+            labelText: l10n.usernameLabel,
+            border: const OutlineInputBorder(),
           ),
         ),
         const SizedBox(height: 12),
         TextField(
           controller: _passwordController,
-          decoration: const InputDecoration(
-            labelText: 'Senha',
-            border: OutlineInputBorder(),
+          decoration: InputDecoration(
+            labelText: l10n.passwordLabel,
+            border: const OutlineInputBorder(),
           ),
           obscureText: true,
         ),
         const SizedBox(height: 12),
         TextField(
           controller: _confirmPasswordController,
-          decoration: const InputDecoration(
-            labelText: 'Confirmar senha',
-            border: OutlineInputBorder(),
+          decoration: InputDecoration(
+            labelText: l10n.confirmPasswordLabel,
+            border: const OutlineInputBorder(),
           ),
           obscureText: true,
           onSubmitted: (_) => _submitImport(),
@@ -355,13 +360,14 @@ class _LocalAuthScreenState extends ConsumerState<LocalAuthScreen> {
         const SizedBox(height: 24),
         FilledButton(
           onPressed: _submitting ? null : _submitImport,
-          child: Text(_submitting ? 'Importando...' : 'Importar'),
+          child: Text(_submitting ? l10n.importing : l10n.importAction),
         ),
       ],
     );
   }
 
   Widget _buildLoginForm(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final accounts = ref.watch(localAuthProvider).accounts;
     final selected = _selectedAccount;
 
@@ -370,7 +376,7 @@ class _LocalAuthScreenState extends ConsumerState<LocalAuthScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           _backButton(),
-          Text('Escolha uma conta',
+          Text(l10n.chooseAccount,
               style: Theme.of(context).textTheme.headlineSmall),
           const SizedBox(height: 16),
           for (final account in accounts)
@@ -407,9 +413,9 @@ class _LocalAuthScreenState extends ConsumerState<LocalAuthScreen> {
         TextField(
           controller: _passwordController,
           autofocus: true,
-          decoration: const InputDecoration(
-            labelText: 'Senha',
-            border: OutlineInputBorder(),
+          decoration: InputDecoration(
+            labelText: l10n.passwordLabel,
+            border: const OutlineInputBorder(),
           ),
           obscureText: true,
           onSubmitted: (_) => _submitLogin(),
@@ -425,7 +431,7 @@ class _LocalAuthScreenState extends ConsumerState<LocalAuthScreen> {
         const SizedBox(height: 24),
         FilledButton(
           onPressed: _submitting ? null : _submitLogin,
-          child: Text(_submitting ? 'Aguarde...' : 'Entrar'),
+          child: Text(_submitting ? l10n.pleaseWait : l10n.signIn),
         ),
       ],
     );

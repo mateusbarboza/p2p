@@ -11,6 +11,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'data/database.dart' show GroupMessage;
 import 'date_divider.dart';
+import 'l10n/app_localizations.dart';
 import 'providers/contacts_provider.dart' show ContactViewModel;
 import 'providers/group_messages_provider.dart';
 import 'providers/groups_provider.dart';
@@ -60,15 +61,16 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
         .where((contact) => !knownMemberKeys.contains(contact.publicKeyHex))
         .toList();
 
+    final l10n = AppLocalizations.of(context)!;
     final selected = await showDialog<ContactViewModel>(
       context: context,
       builder: (context) => SimpleDialog(
-        title: const Text('Convidar contato'),
+        title: Text(l10n.inviteContact),
         children: [
           if (invitableContacts.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 24),
-              child: Text('Nenhum contato disponível para convidar.'),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Text(l10n.noContactsToInvite),
             ),
           for (final contact in invitableContacts)
             SimpleDialogOption(
@@ -92,6 +94,7 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     ref.listen(toxNetworkEventsProvider, (previous, next) {
       next.whenData((event) {
         if (event is ToxGroupMessageSentEvent &&
@@ -99,8 +102,8 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
             event.chatIdHex == widget.chatIdHex) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-                content:
-                    Text('Falha ao enviar mensagem: ${event.errorMessage}')),
+                content: Text(
+                    l10n.errorSendMessageFailed(event.errorMessage ?? ''))),
           );
         }
       });
@@ -131,7 +134,7 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
         actions: [
           IconButton(
             icon: Icon(_showMembers ? Icons.people : Icons.people_outline),
-            tooltip: 'Membros',
+            tooltip: l10n.membersTooltip,
             onPressed: () => setState(() => _showMembers = !_showMembers),
           ),
         ],
@@ -150,9 +153,9 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
                         Expanded(
                           child: TextField(
                             controller: _messageController,
-                            decoration: const InputDecoration(
-                              hintText: 'Mensagem...',
-                              border: OutlineInputBorder(),
+                            decoration: InputDecoration(
+                              hintText: l10n.messageHint,
+                              border: const OutlineInputBorder(),
                             ),
                             spellCheckConfiguration:
                                 ref.watch(spellCheckProvider)
@@ -181,10 +184,10 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
                   OutlinedButton.icon(
                     onPressed: _inviteContact,
                     icon: const Icon(Icons.person_add_alt_1, size: 18),
-                    label: const Text('Convidar contato'),
+                    label: Text(l10n.inviteContact),
                   ),
                   const SizedBox(height: 12),
-                  Text('Membros',
+                  Text(l10n.membersTooltip,
                       style: Theme.of(context).textTheme.titleSmall),
                   const SizedBox(height: 8),
                   for (final rosterEntry in roster)
@@ -196,7 +199,7 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
                               ? liveName
                               : (rosterEntry.name.isNotEmpty
                                   ? rosterEntry.name
-                                  : 'Peer');
+                                  : l10n.peerFallbackName);
                       return ListTile(
                         dense: true,
                         leading: Icon(
@@ -220,17 +223,19 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
   }
 
   Widget _buildTimeline(AsyncValue<List<GroupMessage>> messagesAsync) {
+    final l10n = AppLocalizations.of(context)!;
     if (messagesAsync.isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
     if (messagesAsync.hasError) {
       return Center(
-          child: Text('Erro ao carregar mensagens: ${messagesAsync.error}'));
+          child:
+              Text(l10n.errorLoadingMessages(messagesAsync.error.toString())));
     }
 
     final messages = messagesAsync.value ?? const [];
     if (messages.isEmpty) {
-      return const Center(child: Text('Nenhuma mensagem ainda. Diga oi!'));
+      return Center(child: Text(l10n.noMessagesYet));
     }
 
     return ListView.builder(

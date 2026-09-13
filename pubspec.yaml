@@ -10,6 +10,9 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  intl: any
   # ffi: fornece utilitários extras (malloc, Utf8, etc.) sobre dart:ffi puro.
   ffi: ^2.1.3
   # path_provider: resolve o diretório de dados do app para persistir a
@@ -45,3 +48,4 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  generate: true

@@ -6,14 +6,17 @@
 
 import 'package:flutter/material.dart';
 
-String dateDividerLabel(DateTime date) {
+import 'l10n/app_localizations.dart';
+
+String dateDividerLabel(BuildContext context, DateTime date) {
   final now = DateTime.now();
   final today = DateTime(now.year, now.month, now.day);
   final day = DateTime(date.year, date.month, date.day);
   final difference = today.difference(day).inDays;
 
-  if (difference == 0) return 'Hoje';
-  if (difference == 1) return 'Ontem';
+  final l10n = AppLocalizations.of(context)!;
+  if (difference == 0) return l10n.today;
+  if (difference == 1) return l10n.yesterday;
   return '${date.day.toString().padLeft(2, '0')}/'
       '${date.month.toString().padLeft(2, '0')}/'
       '${date.year}';
@@ -40,7 +43,7 @@ class DateDivider extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: Text(
-              dateDividerLabel(date),
+              dateDividerLabel(context, date),
               style: Theme.of(context).textTheme.labelSmall,
             ),
           ),

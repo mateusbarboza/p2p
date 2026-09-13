@@ -22,12 +22,14 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:local_notifier/local_notifier.dart';
 
 import 'chat_screen.dart';
 import 'group_chat_screen.dart';
 import 'identity_backup.dart';
+import 'l10n/app_localizations.dart';
 import 'local_auth_screen.dart';
 import 'onboarding_screen.dart';
 import 'profile_screen.dart';
@@ -37,6 +39,7 @@ import 'providers/database_provider.dart';
 import 'providers/file_transfers_provider.dart';
 import 'providers/group_messages_provider.dart';
 import 'providers/groups_provider.dart';
+import 'providers/language_provider.dart';
 import 'providers/local_auth_provider.dart';
 import 'providers/messages_provider.dart';
 import 'providers/notifications_provider.dart';
@@ -67,6 +70,7 @@ class TalksnapApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final themeMode = ref.watch(themeModeProvider);
+    final language = ref.watch(languageProvider);
 
     return MaterialApp(
       title: 'Talksnap',
@@ -82,6 +86,14 @@ class TalksnapApp extends ConsumerWidget {
         colorSchemeSeed: _seedColor,
         brightness: Brightness.dark,
       ),
+      locale: Locale(language.code),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const [
+        AppLocalizations.delegate,
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       home: const AppRoot(),
     );
   }
@@ -321,8 +333,10 @@ class _AccountSessionRootState extends ConsumerState<_AccountSessionRoot> {
   /// tela de login. Retorna uma mensagem de erro (ex: senha incorreta) ou
   /// `null` em caso de sucesso.
   Future<String?> _deleteAccountAndCleanUp(String password) async {
+    final wrongPasswordMessage =
+        AppLocalizations.of(context)!.errorWrongPassword;
     final removed = await widget.onDeleteAccountRecord(password);
-    if (!removed) return 'Senha incorreta.';
+    if (!removed) return wrongPasswordMessage;
 
     await ref.read(toxIsolateManagerProvider).stop();
     await deleteAccountFiles();
@@ -383,9 +397,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final talksnapId = _talksnapIdController.text.trim().toUpperCase();
     if (talksnapId.length != kToxAddressSize * 2) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-              'Talksnap ID inválido: deve ter ${kToxAddressSize * 2} caracteres hex.'),
+        SnackBar(
+          content: Text(AppLocalizations.of(context)!
+              .invalidTalksnapId(kToxAddressSize * 2)),
         ),
       );
       return;
@@ -418,10 +432,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   Future<void> _createGroup() async {
     final controller = TextEditingController();
+    final l10n = AppLocalizations.of(context)!;
     final groupName = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Criar grupo'),
+        title: Text(l10n.createGroupTitle),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -429,18 +444,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             TextField(
               controller: controller,
               autofocus: true,
-              decoration: const InputDecoration(
-                labelText: 'Nome do grupo',
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                labelText: l10n.groupNameLabel,
+                border: const OutlineInputBorder(),
               ),
               onSubmitted: (value) => Navigator.pop(context, value.trim()),
             ),
             const SizedBox(height: 12),
             Text(
-              'O grupo só continua acessível enquanto tiver pelo menos uma '
-              'pessoa online nele (incluindo você). Se todo mundo ficar '
-              'offline ao mesmo tempo, ele pode não reaparecer sozinho '
-              'depois — é uma limitação atual do toxcore, não do Talksnap.',
+              l10n.groupOfflineWarning,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
@@ -450,11 +462,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar'),
+            child: Text(l10n.cancelAction),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, controller.text.trim()),
-            child: const Text('Criar'),
+            child: Text(l10n.createAction),
           ),
         ],
       ),
@@ -468,23 +480,27 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     // fundador só consegue sair do grupo localmente; os demais membros
     // continuam com o grupo deles normalmente. A ação por baixo
     // (LeaveGroupCommand) é a mesma, só o rótulo muda.
+    final l10n = AppLocalizations.of(context)!;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(group.isFounder ? 'Excluir grupo?' : 'Sair do grupo?'),
+        title: Text(
+            group.isFounder ? l10n.deleteGroupTitle : l10n.leaveGroupTitle),
         content: Text(
           group.isFounder
-              ? 'Você excluirá "${group.name}" da sua lista e perderá o histórico local dele. Os outros membros continuam com o grupo deles normalmente.'
-              : 'Você sairá de "${group.name}" e perderá o histórico local dele.',
+              ? l10n.deleteGroupBody(group.name)
+              : l10n.leaveGroupBody(group.name),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
+            child: Text(l10n.cancelAction),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: Text(group.isFounder ? 'Excluir' : 'Sair'),
+            child: Text(group.isFounder
+                ? l10n.deleteGroupAction
+                : l10n.leaveGroupAction),
           ),
         ],
       ),
@@ -514,6 +530,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     // Mostra o resultado de um AddFriendCommand (sucesso/falha) como toast,
     // e limpa o campo de texto e o spinner do botão quando resolve.
     ref.listen(toxNetworkEventsProvider, (previous, next) {
@@ -524,8 +541,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           SnackBar(
             content: Text(
               event.success
-                  ? 'Pedido de amizade enviado!'
-                  : 'Falha ao adicionar contato: ${event.errorMessage}',
+                  ? l10n.friendRequestSentToast
+                  : l10n.friendRequestFailedToast(event.errorMessage ?? ''),
             ),
           ),
         );
@@ -550,15 +567,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           context: context,
           barrierDismissible: false,
           builder: (context) => AlertDialog(
-            title: Text('Chamada de ${callerName ?? 'contato desconhecido'}'),
-            content: const Text('Chamada recebida.'),
+            title:
+                Text(l10n.incomingCallTitle(callerName ?? l10n.unknownContact)),
+            content: Text(l10n.incomingCallBody),
             actions: [
               TextButton(
                 onPressed: () {
                   ref.read(callProvider.notifier).hangUp();
                   Navigator.pop(context);
                 },
-                child: const Text('Recusar'),
+                child: Text(l10n.rejectAction),
               ),
               TextButton.icon(
                 onPressed: () {
@@ -566,14 +584,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   Navigator.pop(context);
                 },
                 icon: const Icon(Icons.videocam),
-                label: const Text('Com vídeo'),
+                label: Text(l10n.answerWithVideoAction),
               ),
               FilledButton(
                 onPressed: () {
                   ref.read(callProvider.notifier).answer();
                   Navigator.pop(context);
                 },
-                child: const Text('Atender'),
+                child: Text(l10n.answerAction),
               ),
             ],
           ),
@@ -597,7 +615,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.person_outline),
-            tooltip: 'Meu perfil',
+            tooltip: l10n.myProfileTooltip,
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(
                 builder: (context) => ProfileScreen(
@@ -629,15 +647,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   /// tivesse aberto a conversa específica com quem ligou.
   Widget _buildGlobalCallBar(
       CallState callState, List<ContactViewModel> contacts) {
+    final l10n = AppLocalizations.of(context)!;
     final contactName = contacts
             .where((c) => c.publicKeyHex == callState.contactPublicKeyHex)
             .map((c) => c.displayName)
             .firstOrNull ??
-        'contato';
+        l10n.unknownContact;
     final label = switch (callState.status) {
-      CallStatus.outgoingRinging => 'Chamando $contactName...',
-      CallStatus.incomingRinging => 'Chamada de $contactName...',
-      CallStatus.active => 'Em chamada com $contactName',
+      CallStatus.outgoingRinging => l10n.callingContact(contactName),
+      CallStatus.incomingRinging => l10n.incomingCallLabel(contactName),
+      CallStatus.active => l10n.inCallWith(contactName),
       CallStatus.idle => '',
     };
     return Material(
@@ -652,7 +671,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             if (callState.status != CallStatus.idle)
               IconButton(
                 icon: Icon(callState.muted ? Icons.mic_off : Icons.mic),
-                tooltip: callState.muted ? 'Reativar microfone' : 'Silenciar',
+                tooltip:
+                    callState.muted ? l10n.unmuteTooltip : l10n.muteTooltip,
                 onPressed: () => ref.read(callProvider.notifier).toggleMute(),
               ),
             if (callState.status != CallStatus.idle)
@@ -663,8 +683,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       : Icons.videocam_off,
                 ),
                 tooltip: callState.videoSource == VideoSource.camera
-                    ? 'Desligar câmera'
-                    : 'Ligar câmera',
+                    ? l10n.turnOffCameraTooltip
+                    : l10n.turnOnCameraTooltip,
                 onPressed: () => ref.read(callProvider.notifier).toggleVideo(),
               ),
             if (callState.status != CallStatus.idle)
@@ -675,15 +695,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       : Icons.screen_share,
                 ),
                 tooltip: callState.videoSource == VideoSource.screen
-                    ? 'Parar compartilhamento'
-                    : 'Compartilhar tela',
+                    ? l10n.stopScreenShareTooltip
+                    : l10n.startScreenShareTooltip,
                 onPressed: () =>
                     ref.read(callProvider.notifier).toggleScreenShare(),
               ),
             IconButton(
               icon: const Icon(Icons.call_end),
               color: Colors.red,
-              tooltip: 'Desligar',
+              tooltip: l10n.hangUpTooltip,
               onPressed: () => ref.read(callProvider.notifier).hangUp(),
             ),
           ],
@@ -693,6 +713,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Widget _buildMainRowChildren() {
+    final l10n = AppLocalizations.of(context)!;
     final selfProfile = ref.watch(selfProfileProvider);
     final selfStatus = ref.watch(selfStatusProvider);
     final pendingRequests = ref.watch(pendingRequestsProvider);
@@ -738,7 +759,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         Text(
                           selfProfile.name.isNotEmpty
                               ? selfProfile.name
-                              : 'Sem nome',
+                              : l10n.noNameFallback,
                           style: Theme.of(context).textTheme.titleLarge,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -753,25 +774,28 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   ),
                   const SizedBox(width: 8),
                   PopupMenuButton<int>(
-                    tooltip: 'Mudar status',
+                    tooltip: l10n.changeStatusTooltip,
                     onSelected: (status) => ref
                         .read(selfProfileProvider.notifier)
                         .updateUserStatus(status),
-                    itemBuilder: (context) => const [
+                    itemBuilder: (context) => [
                       PopupMenuItem(
-                          value: kToxUserStatusNone, child: Text('Online')),
+                          value: kToxUserStatusNone,
+                          child: Text(l10n.statusOnline)),
                       PopupMenuItem(
-                          value: kToxUserStatusAway, child: Text('Ausente')),
+                          value: kToxUserStatusAway,
+                          child: Text(l10n.statusAway)),
                       PopupMenuItem(
-                          value: kToxUserStatusBusy, child: Text('Ocupado')),
+                          value: kToxUserStatusBusy,
+                          child: Text(l10n.statusBusy)),
                     ],
                     child: _StatusBadge(
                       color: !isOnline
                           ? Colors.orange
                           : userStatusColor(selfProfile.userStatus),
                       label: !isOnline
-                          ? _connectionLabel(selfStatus.connection)
-                          : userStatusLabel(selfProfile.userStatus),
+                          ? _connectionLabel(l10n, selfStatus.connection)
+                          : userStatusLabel(l10n, selfProfile.userStatus),
                     ),
                   ),
                 ],
@@ -786,14 +810,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       _showTalksnapId ? Icons.visibility_off : Icons.visibility,
                       size: 18,
                     ),
-                    label: const Text('Meu ID'),
+                    label: Text(l10n.myIdAction),
                   ),
                   const SizedBox(width: 8),
                   OutlinedButton.icon(
                     onPressed: () => setState(
                         () => _showAddContactForm = !_showAddContactForm),
                     icon: const Icon(Icons.person_add, size: 18),
-                    label: const Text('Adicionar'),
+                    label: Text(l10n.addAction),
                   ),
                 ],
               ),
@@ -803,14 +827,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   children: [
                     Expanded(
                       child: SelectableText(
-                        selfStatus.talksnapId ?? 'Gerando identidade P2P...',
+                        selfStatus.talksnapId ?? l10n.generatingIdentity,
                         style: const TextStyle(
                             fontFamily: 'monospace', fontSize: 12),
                       ),
                     ),
                     IconButton(
                       icon: const Icon(Icons.copy, size: 18),
-                      tooltip: 'Copiar ID',
+                      tooltip: l10n.copyId,
                       onPressed: selfStatus.talksnapId == null
                           ? null
                           : () => _copyTalksnapId(selfStatus.talksnapId!),
@@ -820,23 +844,23 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               ],
               if (_showAddContactForm) ...[
                 const Divider(height: 32),
-                Text('Adicionar contato',
+                Text(l10n.addContactTitle,
                     style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 8),
                 TextField(
                   controller: _talksnapIdController,
-                  decoration: const InputDecoration(
-                    labelText: 'Talksnap ID do contato',
-                    border: OutlineInputBorder(),
+                  decoration: InputDecoration(
+                    labelText: l10n.contactIdLabel,
+                    border: const OutlineInputBorder(),
                   ),
                   style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
                 ),
                 const SizedBox(height: 8),
                 TextField(
                   controller: _greetingController,
-                  decoration: const InputDecoration(
-                    labelText: 'Mensagem de apresentação',
-                    border: OutlineInputBorder(),
+                  decoration: InputDecoration(
+                    labelText: l10n.greetingMessageLabel,
+                    border: const OutlineInputBorder(),
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -844,13 +868,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   onPressed: _sendingFriendRequest ? null : _submitAddFriend,
                   icon: const Icon(Icons.person_add),
                   label: Text(_sendingFriendRequest
-                      ? 'Enviando...'
-                      : 'Enviar pedido de amizade'),
+                      ? l10n.sendingAction
+                      : l10n.sendFriendRequestAction),
                 ),
               ],
               if (pendingRequests.isNotEmpty) ...[
                 const Divider(height: 40),
-                Text('Pedidos recebidos',
+                Text(l10n.receivedRequestsTitle,
                     style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 8),
                 for (final request in pendingRequests)
@@ -864,7 +888,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       subtitle: Text(request.message),
                       trailing: FilledButton(
                         onPressed: () => _acceptRequest(request),
-                        child: const Text('Aceitar'),
+                        child: Text(l10n.acceptAction),
                       ),
                     ),
                   ),
@@ -873,7 +897,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               Row(
                 children: [
                   Expanded(
-                    child: Text('Contatos (${contacts.length})',
+                    child: Text(l10n.contactsCountTitle(contacts.length),
                         style: Theme.of(context).textTheme.titleMedium),
                   ),
                   if (contacts.isNotEmpty)
@@ -882,7 +906,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         _showContactSearch ? Icons.search_off : Icons.search,
                         size: 20,
                       ),
-                      tooltip: 'Buscar contato',
+                      tooltip: l10n.searchContactTooltip,
                       onPressed: () => setState(() {
                         _showContactSearch = !_showContactSearch;
                         if (!_showContactSearch) {
@@ -899,7 +923,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   controller: _contactSearchController,
                   autofocus: true,
                   decoration: InputDecoration(
-                    hintText: 'Buscar contato',
+                    hintText: l10n.searchContactTooltip,
                     prefixIcon: const Icon(Icons.search, size: 20),
                     isDense: true,
                     border: const OutlineInputBorder(),
@@ -919,16 +943,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 const SizedBox(height: 8),
               ],
               if (contacts.isEmpty)
-                const Text('Nenhum contato ainda.')
+                Text(l10n.noContactsYetHome)
               else if (filteredContacts.isEmpty)
-                const Text('Nenhum contato encontrado.')
+                Text(l10n.noContactsFound)
               else
                 for (final contact in filteredContacts)
                   _ContactTile(
                     contact: contact,
                     connectionLabel: contact.connection != ToxConnection.none
-                        ? userStatusLabel(contact.userStatus)
-                        : _connectionLabel(contact.connection),
+                        ? userStatusLabel(l10n, contact.userStatus)
+                        : _connectionLabel(l10n, contact.connection),
                     selected:
                         _selectedContact?.publicKeyHex == contact.publicKeyHex,
                     onTap: () => _openChat(contact),
@@ -936,24 +960,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   ),
               if (pendingGroupInvites.isNotEmpty) ...[
                 const Divider(height: 40),
-                Text('Convites de grupo',
+                Text(l10n.groupInvitesTitle,
                     style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 8),
                 for (final invite in pendingGroupInvites)
                   Card(
                     child: ListTile(
                       title: Text(invite.groupName),
-                      subtitle: const Text('Convite de um contato'),
+                      subtitle: Text(l10n.inviteFromContact),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           TextButton(
                             onPressed: () => _rejectGroupInvite(invite),
-                            child: const Text('Recusar'),
+                            child: Text(l10n.rejectAction),
                           ),
                           FilledButton(
                             onPressed: () => _acceptGroupInvite(invite),
-                            child: const Text('Aceitar'),
+                            child: Text(l10n.acceptAction),
                           ),
                         ],
                       ),
@@ -964,19 +988,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               Row(
                 children: [
                   Expanded(
-                    child: Text('Grupos (${groups.length})',
+                    child: Text(l10n.groupsCountTitle(groups.length),
                         style: Theme.of(context).textTheme.titleMedium),
                   ),
                   IconButton(
                     icon: const Icon(Icons.group_add_outlined, size: 20),
-                    tooltip: 'Criar grupo',
+                    tooltip: l10n.createGroupTooltip,
                     onPressed: _createGroup,
                   ),
                 ],
               ),
               const SizedBox(height: 8),
               if (groups.isEmpty)
-                const Text('Nenhum grupo ainda.')
+                Text(l10n.noGroupsYet)
               else
                 for (final group in groups)
                   _GroupTile(
@@ -998,8 +1022,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   contacts: contacts,
                 )
               : _selectedContact == null
-                  ? const Center(
-                      child: Text('Selecione um contato para conversar'))
+                  ? Center(child: Text(l10n.selectContactPrompt))
                   : ChatScreen(
                       key: ValueKey(_selectedContact!.publicKeyHex),
                       contactPublicKeyHex: _selectedContact!.publicKeyHex,
@@ -1011,21 +1034,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Future<void> _confirmRemoveContact(ContactViewModel contact) async {
+    final l10n = AppLocalizations.of(context)!;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Remover contato?'),
-        content: Text(
-          '${contact.displayName} será removido dos seus contatos. Essa ação não pode ser desfeita.',
-        ),
+        title: Text(l10n.removeContactTitle),
+        content: Text(l10n.removeContactBody(contact.displayName)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
+            child: Text(l10n.cancelAction),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Remover'),
+            child: Text(l10n.removeAction),
           ),
         ],
       ),
@@ -1038,7 +1060,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   void _copyTalksnapId(String talksnapId) {
     Clipboard.setData(ClipboardData(text: talksnapId));
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Talksnap ID copiado!')),
+      SnackBar(content: Text(AppLocalizations.of(context)!.talksnapIdCopied)),
     );
   }
 
@@ -1049,14 +1071,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     });
   }
 
-  String _connectionLabel(ToxConnection connection) {
+  String _connectionLabel(AppLocalizations l10n, ToxConnection connection) {
     switch (connection) {
       case ToxConnection.udp:
-        return 'Online';
+        return l10n.onlineStatus;
       case ToxConnection.tcp:
-        return 'Online (via relay)';
+        return l10n.onlineViaRelay;
       case ToxConnection.none:
-        return 'Offline';
+        return l10n.offlineStatus;
     }
   }
 }
@@ -1064,15 +1086,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 /// Rótulo do status de presença (Online/Ausente/Ocupado) — função livre
 /// porque tanto o cabeçalho do próprio usuário (_HomeScreenState) quanto a
 /// listagem de contatos (_ContactTile) precisam dela.
-String userStatusLabel(int userStatus) {
+String userStatusLabel(AppLocalizations l10n, int userStatus) {
   switch (userStatus) {
     case kToxUserStatusAway:
-      return 'Ausente';
+      return l10n.statusAway;
     case kToxUserStatusBusy:
-      return 'Ocupado';
+      return l10n.statusBusy;
     case kToxUserStatusNone:
     default:
-      return 'Online';
+      return l10n.statusOnline;
   }
 }
 
@@ -1118,6 +1140,7 @@ class _ContactTileState extends ConsumerState<_ContactTile> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final contact = widget.contact;
     final unreadCount =
         ref.watch(unreadMessagesCountProvider(contact.publicKeyHex));
@@ -1158,12 +1181,12 @@ class _ContactTileState extends ConsumerState<_ContactTile> {
             ],
           ),
           subtitle: inCallWithContact
-              ? const Text('Em chamada',
-                  style: TextStyle(
+              ? Text(l10n.inCallLabel,
+                  style: const TextStyle(
                       color: Colors.green, fontWeight: FontWeight.bold))
               : contact.isTyping
-                  ? const Text('Digitando...',
-                      style: TextStyle(
+                  ? Text(l10n.typingIndicator,
+                      style: const TextStyle(
                           color: Colors.green, fontWeight: FontWeight.bold))
                   : contact.statusMessage?.isNotEmpty == true
                       ? Text(contact.statusMessage!)
@@ -1176,11 +1199,11 @@ class _ContactTileState extends ConsumerState<_ContactTile> {
                     padding: EdgeInsets.zero,
                     icon: const Icon(Icons.arrow_drop_down_circle_outlined,
                         size: 18),
-                    tooltip: 'Mais opções',
+                    tooltip: l10n.moreOptionsTooltip,
                     itemBuilder: (context) => [
                       PopupMenuItem<void>(
                         onTap: widget.onRemove,
-                        child: const Text('Remover contato'),
+                        child: Text(l10n.removeContactMenuAction),
                       ),
                     ],
                   )
@@ -1244,6 +1267,7 @@ class _GroupTileState extends ConsumerState<_GroupTile> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final group = widget.group;
     // Roster persistido (sobrevive a reinício) em vez de group.members.length
     // (só reflete quem já reconectou nesta sessão) — sem isso, a contagem
@@ -1264,7 +1288,7 @@ class _GroupTileState extends ConsumerState<_GroupTile> {
           onTap: widget.onTap,
           leading: const Icon(Icons.groups_outlined),
           title: Text(group.name),
-          subtitle: Text('${memberCount + 1} membro(s)'),
+          subtitle: Text(l10n.membersCountLabel(memberCount + 1)),
           trailing: SizedBox(
             width: 28,
             height: 28,
@@ -1273,13 +1297,13 @@ class _GroupTileState extends ConsumerState<_GroupTile> {
                     padding: EdgeInsets.zero,
                     icon: const Icon(Icons.arrow_drop_down_circle_outlined,
                         size: 18),
-                    tooltip: 'Mais opções',
+                    tooltip: l10n.moreOptionsTooltip,
                     itemBuilder: (context) => [
                       PopupMenuItem<void>(
                         onTap: widget.onLeave,
                         child: Text(group.isFounder
-                            ? 'Excluir grupo'
-                            : 'Sair do grupo'),
+                            ? l10n.deleteGroupMenuAction
+                            : l10n.leaveGroupMenuAction),
                       ),
                     ],
                   )

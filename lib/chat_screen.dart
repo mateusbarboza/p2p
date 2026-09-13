@@ -24,6 +24,8 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'data/database.dart' show CallLog, FileTransfer, Message;
 import 'date_divider.dart';
+import 'l10n/app_localizations.dart';
+import 'providers/av_device_settings_provider.dart';
 import 'providers/call_provider.dart';
 import 'providers/contacts_provider.dart';
 import 'providers/database_provider.dart';
@@ -213,10 +215,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final hasPermission = await _voiceRecorder.hasPermission();
     if (!hasPermission) return;
     _voiceRecordingBytes.clear();
-    final stream = await _voiceRecorder.startStream(const RecordConfig(
+    final stream = await _voiceRecorder.startStream(RecordConfig(
       encoder: AudioEncoder.pcm16bits,
       sampleRate: _kVoiceMessageSampleRate,
       numChannels: _kVoiceMessageChannels,
+      device: ref.read(avDeviceSettingsProvider).microphone,
     ));
     _voiceRecordingSubscription = stream.listen(_voiceRecordingBytes.add);
     setState(() {
@@ -279,19 +282,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   /// confirmação porque não tem como desfazer.
   Future<void> _confirmDelete(
       String description, Future<void> Function() action) async {
+    final l10n = AppLocalizations.of(context)!;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Excluir?'),
-        content: Text(
-            '$description será removido só do seu histórico. Essa ação não pode ser desfeita.'),
+        title: Text(l10n.deleteConfirmTitle),
+        content: Text(l10n.deleteConfirmBody(description)),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancelar')),
+              child: Text(l10n.cancelAction)),
           FilledButton(
               onPressed: () => Navigator.pop(context, true),
-              child: const Text('Excluir')),
+              child: Text(l10n.deleteConfirmAction)),
         ],
       ),
     );
@@ -303,7 +306,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   void _deleteMessage(Message message) {
     unawaited(
       _confirmDelete(
-        'Essa mensagem',
+        AppLocalizations.of(context)!.thisMessage,
         () => ref.read(messagesRepositoryProvider).deleteById(message.id),
       ),
     );
@@ -312,7 +315,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   void _deleteFileTransfer(FileTransfer transfer) {
     unawaited(
       _confirmDelete(
-        'Esse arquivo',
+        AppLocalizations.of(context)!.thisFile,
         () => ref.read(fileTransfersRepositoryProvider).deleteById(transfer.id),
       ),
     );
@@ -380,12 +383,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   ),
             );
           } else {
-            errorMessage = 'Falha ao enviar mensagem: ${event.errorMessage}';
+            errorMessage = AppLocalizations.of(context)!
+                .errorSendMessageFailed(event.errorMessage ?? '');
           }
         } else if (event is ToxFileTransferEvent &&
             event.phase == ToxFileTransferPhase.failed &&
             event.publicKeyHex == widget.contactPublicKeyHex) {
-          errorMessage = 'Falha na transferência: ${event.errorMessage}';
+          errorMessage = AppLocalizations.of(context)!
+              .errorTransferFailed(event.errorMessage ?? '');
         }
         if (errorMessage != null) {
           ScaffoldMessenger.of(context)
@@ -409,6 +414,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final isThisContactInCall =
         callState.contactPublicKeyHex == widget.contactPublicKeyHex &&
             callState.status != CallStatus.idle;
+    final l10n = AppLocalizations.of(context)!;
 
     return Scaffold(
       appBar: AppBar(
@@ -431,13 +437,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             child: _buildTimeline(messagesAsync, transfersAsync, callLogsAsync),
           ),
           if (isContactTyping)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  'Digitando...',
-                  style: TextStyle(
+                  l10n.typingIndicator,
+                  style: const TextStyle(
                       color: Colors.green, fontWeight: FontWeight.bold),
                 ),
               ),
@@ -458,9 +464,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                         Expanded(
                           child: TextField(
                             controller: _messageController,
-                            decoration: const InputDecoration(
-                              hintText: 'Mensagem...',
-                              border: OutlineInputBorder(),
+                            decoration: InputDecoration(
+                              hintText: l10n.messageHint,
+                              border: const OutlineInputBorder(),
                             ),
                             spellCheckConfiguration:
                                 ref.watch(spellCheckProvider)
@@ -471,7 +477,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                         ),
                         IconButton(
                           onPressed: _startVoiceRecording,
-                          tooltip: 'Gravar áudio',
+                          tooltip: l10n.recordAudioTooltip,
                           icon: const Icon(Icons.mic),
                         ),
                         const SizedBox(width: 8),
@@ -487,6 +493,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   Widget _buildVoiceRecordingBar() {
+    final l10n = AppLocalizations.of(context)!;
     final minutes = _voiceRecordingElapsed.inMinutes.toString().padLeft(2, '0');
     final seconds =
         (_voiceRecordingElapsed.inSeconds % 60).toString().padLeft(2, '0');
@@ -494,15 +501,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       children: [
         IconButton(
           onPressed: _cancelVoiceRecording,
-          tooltip: 'Cancelar',
+          tooltip: l10n.cancelAction,
           icon: const Icon(Icons.delete_outline),
         ),
         const Icon(Icons.fiber_manual_record, color: Colors.red, size: 14),
         const SizedBox(width: 6),
-        Expanded(child: Text('Gravando áudio... $minutes:$seconds')),
+        Expanded(child: Text(l10n.recordingAudioLabel('$minutes:$seconds'))),
         IconButton.filled(
           onPressed: _stopAndSendVoiceMessage,
-          tooltip: 'Enviar áudio',
+          tooltip: l10n.sendAudioTooltip,
           icon: const Icon(Icons.send),
         ),
       ],
@@ -518,7 +525,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     if (isThisContactInCall) return const SizedBox.shrink();
     return IconButton(
       icon: const Icon(Icons.call),
-      tooltip: 'Ligar',
+      tooltip: AppLocalizations.of(context)!.callTooltip,
       onPressed: () =>
           ref.read(callProvider.notifier).startCall(widget.contactPublicKeyHex),
     );
@@ -528,7 +535,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     if (isThisContactInCall) return const SizedBox.shrink();
     return IconButton(
       icon: const Icon(Icons.videocam),
-      tooltip: 'Ligar com vídeo',
+      tooltip: AppLocalizations.of(context)!.callWithVideoTooltip,
       onPressed: () => ref
           .read(callProvider.notifier)
           .startCall(widget.contactPublicKeyHex, video: true),
@@ -537,6 +544,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   Widget _buildVideoArea(CallState callState) {
     final notifier = ref.read(callProvider.notifier);
+    final l10n = AppLocalizations.of(context)!;
     return Container(
       color: Colors.black,
       child: Stack(
@@ -545,17 +553,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             child: callState.remoteVideoActive
                 ? _VideoFrameView(
                     frameListenable: notifier.remoteVideoFrame,
-                    placeholder: const Center(
+                    placeholder: Center(
                       child: Text(
-                        'Aguardando vídeo...',
-                        style: TextStyle(color: Colors.white70),
+                        l10n.waitingVideo,
+                        style: const TextStyle(color: Colors.white70),
                       ),
                     ),
                   )
-                : const Center(
+                : Center(
                     child: Text(
-                      'O contato não está mandando vídeo',
-                      style: TextStyle(color: Colors.white70),
+                      l10n.contactNotSendingVideo,
+                      style: const TextStyle(color: Colors.white70),
                     ),
                   ),
           ),
@@ -586,17 +594,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     AsyncValue<List<FileTransfer>> transfersAsync,
     AsyncValue<List<CallLog>> callLogsAsync,
   ) {
+    final l10n = AppLocalizations.of(context)!;
     if (messagesAsync.isLoading || transfersAsync.isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
     if (messagesAsync.hasError) {
       return Center(
-          child: Text('Erro ao carregar mensagens: ${messagesAsync.error}'));
+          child:
+              Text(l10n.errorLoadingMessages(messagesAsync.error.toString())));
     }
     if (transfersAsync.hasError) {
       return Center(
-          child:
-              Text('Erro ao carregar transferências: ${transfersAsync.error}'));
+          child: Text(
+              l10n.errorLoadingTransfers(transfersAsync.error.toString())));
     }
 
     final items = <_TimelineItem>[
@@ -609,7 +619,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     ]..sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
     if (items.isEmpty) {
-      return const Center(child: Text('Nenhuma mensagem ainda. Diga oi!'));
+      return Center(child: Text(l10n.noMessagesYet));
     }
 
     // `reverse: true` + lista invertida (mais recente primeiro) em vez de
@@ -747,6 +757,7 @@ class _HoverDeleteWrapperState extends State<_HoverDeleteWrapper> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final menuButton = SizedBox(
       width: 28,
       height: 28,
@@ -754,11 +765,11 @@ class _HoverDeleteWrapperState extends State<_HoverDeleteWrapper> {
           ? PopupMenuButton<void>(
               padding: EdgeInsets.zero,
               icon: const Icon(Icons.arrow_drop_down_circle_outlined, size: 18),
-              tooltip: 'Mais opções',
+              tooltip: l10n.moreOptionsTooltip,
               itemBuilder: (context) => [
                 PopupMenuItem<void>(
                   onTap: widget.onDelete,
-                  child: const Text('Apagar'),
+                  child: Text(l10n.deleteMenuAction),
                 ),
               ],
             )
@@ -792,13 +803,14 @@ class _CallLogBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final time = '${log.timestamp.hour.toString().padLeft(2, '0')}:'
         '${log.timestamp.minute.toString().padLeft(2, '0')}';
     final label = switch (log.kind) {
       'started' =>
-        log.outgoing ? 'Chamada de voz iniciada' : 'Chamada de voz recebida',
-      'ended' => 'Chamada encerrada',
-      _ => 'Chamada de voz',
+        log.outgoing ? l10n.callStartedOutgoing : l10n.callStartedIncoming,
+      'ended' => l10n.callEnded,
+      _ => l10n.voiceCallGeneric,
     };
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
@@ -1005,6 +1017,7 @@ class _FileTransferBubbleState extends State<_FileTransferBubble> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
     final progress = transfer.totalBytes == 0
         ? 0.0
@@ -1037,7 +1050,7 @@ class _FileTransferBubbleState extends State<_FileTransferBubble> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  _isAudio ? 'Mensagem de voz' : transfer.fileName,
+                  _isAudio ? l10n.voiceMessageLabel : transfer.fileName,
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
@@ -1072,7 +1085,7 @@ class _FileTransferBubbleState extends State<_FileTransferBubble> {
           if (!isPendingIncoming)
             LinearProgressIndicator(value: progress.clamp(0, 1)),
           const SizedBox(height: 4),
-          Text(_statusLabel(transfer),
+          Text(_statusLabel(l10n, transfer),
               style: Theme.of(context).textTheme.labelSmall),
           if (isPendingIncoming)
             Padding(
@@ -1080,10 +1093,11 @@ class _FileTransferBubbleState extends State<_FileTransferBubble> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  TextButton(onPressed: onReject, child: const Text('Recusar')),
+                  TextButton(
+                      onPressed: onReject, child: Text(l10n.rejectAction)),
                   const SizedBox(width: 4),
                   FilledButton(
-                      onPressed: onAccept, child: const Text('Aceitar')),
+                      onPressed: onAccept, child: Text(l10n.acceptAction)),
                 ],
               ),
             ),
@@ -1096,12 +1110,12 @@ class _FileTransferBubbleState extends State<_FileTransferBubble> {
                   TextButton.icon(
                     onPressed: _downloadFile,
                     icon: const Icon(Icons.download, size: 16),
-                    label: const Text('Baixar'),
+                    label: Text(l10n.downloadAction),
                   ),
                   TextButton.icon(
                     onPressed: _openFile,
                     icon: const Icon(Icons.open_in_new, size: 16),
-                    label: const Text('Abrir'),
+                    label: Text(l10n.openAction),
                   ),
                 ],
               ),
@@ -1111,23 +1125,25 @@ class _FileTransferBubbleState extends State<_FileTransferBubble> {
     );
   }
 
-  String _statusLabel(FileTransfer transfer) {
+  String _statusLabel(AppLocalizations l10n, FileTransfer transfer) {
     final sizeLabel = '${(transfer.totalBytes / 1024).toStringAsFixed(1)} KB';
     switch (transfer.status) {
       case ToxFileTransferPhase.requested:
         return transfer.outgoing
-            ? 'Aguardando aceitação... ($sizeLabel)'
-            : 'Recebido pedido de envio ($sizeLabel)';
+            ? l10n.transferStatusWaitingAcceptance(sizeLabel)
+            : l10n.transferStatusRequestReceived(sizeLabel);
       case ToxFileTransferPhase.progress:
-        return '${(transfer.bytesTransferred / 1024).toStringAsFixed(1)} KB / $sizeLabel';
+        final transferredLabel =
+            '${(transfer.bytesTransferred / 1024).toStringAsFixed(1)} KB';
+        return l10n.transferStatusProgress(transferredLabel, sizeLabel);
       case ToxFileTransferPhase.completed:
         return transfer.outgoing
-            ? 'Enviado ($sizeLabel)'
-            : 'Recebido ($sizeLabel)';
+            ? l10n.transferStatusSentComplete(sizeLabel)
+            : l10n.transferStatusReceivedComplete(sizeLabel);
       case ToxFileTransferPhase.cancelled:
-        return 'Cancelado';
+        return l10n.transferStatusCancelled;
       case ToxFileTransferPhase.failed:
-        return 'Falhou';
+        return l10n.transferStatusFailed;
     }
   }
 }

@@ -23,6 +23,7 @@ import '../camera_capture_isolate.dart';
 import '../data/database.dart' show CallLog;
 import '../screen_capture_isolate.dart';
 import '../tox_events.dart';
+import 'av_device_settings_provider.dart';
 import 'database_provider.dart';
 import 'tox_events_provider.dart';
 import 'tox_manager_provider.dart';
@@ -352,6 +353,7 @@ class CallNotifier extends Notifier<CallState> {
       width: _kVideoWidth,
       height: _kVideoHeight,
       captureInterval: _kVideoCaptureInterval,
+      cameraIndex: ref.read(avDeviceSettingsProvider).cameraIndex,
     );
     if (camera == null) return;
     // A chamada pode ter sido encerrada ou a câmera desligada de novo
@@ -579,10 +581,11 @@ class CallNotifier extends Notifier<CallState> {
     // ignore: avoid_print
     print('[call-debug] _recorder.hasPermission() = $hasPermission');
     if (!hasPermission) return;
-    final stream = await _recorder.startStream(const RecordConfig(
+    final stream = await _recorder.startStream(RecordConfig(
       encoder: AudioEncoder.pcm16bits,
       sampleRate: _kSampleRate,
       numChannels: _kChannels,
+      device: ref.read(avDeviceSettingsProvider).microphone,
     ));
     // ignore: avoid_print
     print('[call-debug] _recorder.startStream() OK, escutando microfone');

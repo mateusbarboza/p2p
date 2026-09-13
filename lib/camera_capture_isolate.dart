@@ -42,12 +42,14 @@ class _CameraIsolateConfig {
     required this.width,
     required this.height,
     required this.captureInterval,
+    required this.cameraIndex,
   });
 
   final SendPort readySendPort;
   final int width;
   final int height;
   final Duration captureInterval;
+  final int cameraIndex;
 }
 
 class _StopSignal {
@@ -70,6 +72,7 @@ class CameraCaptureIsolate {
     required int width,
     required int height,
     required Duration captureInterval,
+    int cameraIndex = 0,
   }) async {
     final readyPort = ReceivePort();
     final isolate = await Isolate.spawn(
@@ -79,6 +82,7 @@ class CameraCaptureIsolate {
         width: width,
         height: height,
         captureInterval: captureInterval,
+        cameraIndex: cameraIndex,
       ),
     );
     final commandPort = await readyPort.first as SendPort;
@@ -131,7 +135,7 @@ void _cameraIsolateEntry(_CameraIsolateConfig config) {
     final framePort = message;
 
     try {
-      final cam = cv.VideoCapture.fromDevice(0);
+      final cam = cv.VideoCapture.fromDevice(config.cameraIndex);
       if (!cam.isOpened) {
         cam.dispose();
         return;

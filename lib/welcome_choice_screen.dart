@@ -13,6 +13,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import 'identity_backup.dart';
+import 'l10n/app_localizations.dart';
 
 class WelcomeChoiceScreen extends StatefulWidget {
   const WelcomeChoiceScreen({super.key, required this.onIdentityReady});
@@ -46,15 +47,17 @@ class _WelcomeChoiceScreenState extends State<WelcomeChoiceScreen> {
       await savedataFile.writeAsBytes(backupBytes, flush: true);
       widget.onIdentityReady();
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _importing = false;
-        _error = 'Não foi possível importar esse arquivo: $e';
+        _error = AppLocalizations.of(context)!.errorImportFailed(e.toString());
       });
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Scaffold(
       body: Center(
         child: ConstrainedBox(
@@ -65,13 +68,13 @@ class _WelcomeChoiceScreenState extends State<WelcomeChoiceScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  'Bem-vindo(a) ao Talksnap!',
+                  l10n.welcomeTitleExclamation,
                   style: Theme.of(context).textTheme.headlineSmall,
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  'Você já tem uma identidade Talksnap de um backup, ou quer criar uma nova?',
+                  l10n.welcomeImportOrCreateQuestion,
                   style: Theme.of(context).textTheme.bodyMedium,
                   textAlign: TextAlign.center,
                 ),
@@ -79,15 +82,15 @@ class _WelcomeChoiceScreenState extends State<WelcomeChoiceScreen> {
                 FilledButton.icon(
                   onPressed: _importing ? null : widget.onIdentityReady,
                   icon: const Icon(Icons.person_add_alt_1),
-                  label: const Text('Criar nova identidade'),
+                  label: Text(l10n.createNewIdentity),
                 ),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
                   onPressed: _importing ? null : _importBackup,
                   icon: const Icon(Icons.file_upload_outlined),
                   label: Text(_importing
-                      ? 'Importando...'
-                      : 'Importar identidade (.tox)'),
+                      ? l10n.importing
+                      : l10n.importIdentityToxAction),
                 ),
                 if (_error != null) ...[
                   const SizedBox(height: 16),

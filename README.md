@@ -1,37 +1,42 @@
+🇧🇷 [Ler em português](README.pt-BR.md)
+
 # Talksnap
 
-Mensageiro P2P descentralizado (Flutter + [toxcore](https://github.com/TokTok/c-toxcore) via `dart:ffi`), focado em recuperar a experiência nostálgica de mensageiros como o MSN — mas 100% P2P e privado, sem servidores.
+Talksnap is a decentralized P2P messenger (Flutter + [toxcore](https://github.com/TokTok/c-toxcore) via `dart:ffi`) — fully peer-to-peer and private, with no central servers.
 
-## Status
+## Features
 
-Fases 0–6 do roadmap implementadas e validadas localmente (ver `native/README.md` e `docs/manual_testing.md`):
+- **Persistent P2P identity (Tox)** — no central server, no "recover account". Your identity can be backed up/exported (`.tox` file) and imported on another device (Profile > Security).
+- **Multiple local accounts** on the same device, each behind its own local username/password lock, with fully separate identity/database/contacts.
+- **1:1 text messaging** with delivery confirmation and offline queueing (messages are automatically resent once the contact reconnects).
+- **Group chats (NGC)**: create groups, invite existing contacts, roster persisted across restarts. Known limitation: a group becomes unreachable if every member goes offline at the same time — this is a native toxcore limitation, not app-level, and is already surfaced in-app.
+- **File transfer** with image preview, open/download, and an optional auto-accept setting with a configurable max size.
+- **Voice messages** (record and play back directly in the chat).
+- **Voice and video calls** (ToxAV), with mute and camera toggle.
+- **Screen sharing** during a call (mutually exclusive with the camera — only one video source at a time).
+- **Selectable microphone/camera** device in Settings.
+- **Presence/status** (online/away/busy) and typing indicator.
+- **Native desktop notifications** for new messages.
+- **Spell check** toggle for the message input.
+- **Light/Dark/System theme**.
+- **Full UI localization**: English, Spanish, Portuguese, Chinese, Japanese, German, French — switchable live from Profile > Settings.
+- **In-app update checker** against GitHub Releases, with an "Update" button that opens the release page.
 
-- Fundação nativa: toxcore compilado do zero (CMake + vcpkg) para Windows.
-- Identidade persistente + conectividade real com a rede Tox.
-- Gestão de amigos (pedidos, aceitar, remover).
-- Persistência estruturada (Drift): contatos, mensagens, transferências de arquivo.
-- Mensagens de texto 1:1 com histórico e confirmação de entrega.
-- Transferência de arquivos com prévia de imagem, abrir e baixar.
-- Perfil (nome, descrição, foto local) sincronizado via toxcore.
-- Layout mestre-detalhe (contatos à esquerda, conversa à direita).
+## Downloads
 
-Ainda não testado em rede real entre duas máquinas físicas (Fase 6 tem o checklist pronto, falta rodar com um segundo dispositivo).
+Prebuilt Windows installers are published on the [Releases page](https://github.com/mateusbarboza/p2p/releases) (`TalksnapSetup-<version>.exe`). Windows only for now — no Android/iOS/macOS build yet.
 
-## Rodando localmente
+## Running from source
 
-Pré-requisitos: Flutter SDK, Visual Studio 2022 (workload "Desenvolvimento para desktop com C++"), CMake ≥ 3.21.
+Prerequisites: Flutter SDK, Visual Studio 2022 (workload "Desktop development with C++"), CMake ≥ 3.21.
 
 ```powershell
 git submodule update --init --recursive
-pwsh native/scripts/build_windows.ps1
+pwsh native/scripts/build_windows.ps1 -Config Release
 flutter pub get
-flutter run -d windows
+flutter run -d windows --release
 ```
 
-Veja `native/README.md` para detalhes do build nativo (toxcore/libsodium via vcpkg) e como ele se integra ao runner do Flutter Windows.
+See `native/README.md` for native build details (toxcore/libsodium/opus/libvpx via vcpkg) and how it integrates with the Flutter Windows runner.
 
-Para testar localmente com duas identidades distintas na mesma máquina (sem precisar de um segundo dispositivo), rode duas cópias do executável com a variável de ambiente `TALKSNAP_PROFILE` diferente em cada uma (ex: `alice` e `bob`) — cada perfil usa seu próprio savedata e banco de dados.
-
-## Próximos passos
-
-Ver o roadmap completo nas fases 7 (Android), 8 (iOS/macOS) e 9 (chamadas de voz/vídeo via ToxAV).
+To test locally with two distinct identities on the same machine (without needing a second device), run two copies of the executable with a different `TALKSNAP_PROFILE` environment variable in each (e.g. `alice` and `bob`) — each profile uses its own savedata and database.
